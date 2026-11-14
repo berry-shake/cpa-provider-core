@@ -1,0 +1,75 @@
+package core
+
+import (
+	"net/http"
+	"strings"
+
+	"github.com/berry-shake/cpa-provider-core/flags"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
+)
+
+// pageCSP only allows same-origin framing, so the CPA management panel can
+// embed the page and share its remembered management key.
+var pageCSP = strings.Join([]string{
+	"default-src 'none'",
+	"style-src 'unsafe-inline'",
+	"script-src 'unsafe-inline'",
+	"img-src 'self' data:",
+	"connect-src 'self'",
+	"base-uri 'none'",
+	"form-action 'none'",
+	"frame-ancestors 'self'",
+}, "; ")
+
+// logoCSP keeps the SVG inert when it is opened directly: no scripts, no
+// external fetches.
+const logoCSP = "default-src 'none'; style-src 'unsafe-inline'; sandbox"
+
+func (s *Service) pageResponse() pluginapi.ManagementResponse {
+	return pluginapi.ManagementResponse{
+		StatusCode: http.StatusOK,
+		Headers: http.Header{
+			"Content-Type":            []string{"text/html; charset=utf-8"},
+			"Cache-Control":           []string{"no-store"},
+			"X-Content-Type-Options":  []string{"nosniff"},
+			"Content-Security-Policy": []string{pageCSP},
+		},
+		Body: append([]byte(nil), s.spec.Page()...),
+	}
+}
+
+// flagResponse serves a country flag by its two-letter code. Flags never
+// change, so browsers may keep them for a week.
+func flagResponse(code string) pluginapi.ManagementResponse {
+	raw, ok := flags.SVG(code)
+	if !ok {
+		return pluginapi.ManagementResponse{
+			StatusCode: http.StatusNotFound,
+			Headers:    http.Header{"Content-Type": []string{"text/plain; charset=utf-8"}, "Cache-Control": []string{"public, max-age=86400"}},
+			Body:       []byte("unknown country code"),
+		}
+	}
+	return pluginapi.ManagementResponse{
+		StatusCode: http.StatusOK,
+		Headers: http.Header{
+			"Content-Type":            []string{"image/svg+xml"},
+			"Cache-Control":           []string{"public, max-age=604800"},
+			"X-Content-Type-Options":  []string{"nosniff"},
+			"Content-Security-Policy": []string{logoCSP},
+		},
+		Body: append([]byte(nil), raw...),
+	}
+}
+
+func (s *Service) logoResponse() pluginapi.ManagementResponse {
+	return pluginapi.ManagementResponse{
+		StatusCode: http.StatusOK,
+		Headers: http.Header{
+			"Content-Type":            []string{"image/svg+xml"},
+			"Cache-Control":           []string{"public, max-age=86400"},
+			"X-Content-Type-Options":  []string{"nosniff"},
+			"Content-Security-Policy": []string{logoCSP},
+		},
+		Body: append([]byte(nil), s.spec.Logo()...),
+	}
+}
