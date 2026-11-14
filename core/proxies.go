@@ -172,7 +172,7 @@ func (s *Service) repointCredentials(oldURL, newURL string) (int, []string, stri
 	if errList != nil {
 		return 0, nil, errList.Error()
 	}
-	revision := s.catalog.Current().Summary().Revision
+	snapshot := s.catalog.Current()
 	updated := 0
 	var failed []string
 	for _, entry := range entries {
@@ -186,7 +186,7 @@ func (s *Service) repointCredentials(oldURL, newURL string) (int, []string, stri
 		}
 		fields := cloneFields(entry.fields)
 		fields[credential.KeyProxyURL] = newURL
-		if revision != "" {
+		if revision := revisionFor(snapshot, entry.cred); revision != "" {
 			fields[credential.KeyModelRevision] = revision
 		}
 		if errSave := s.saveAuthFile(name, fields); errSave != nil {

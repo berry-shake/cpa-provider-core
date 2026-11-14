@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/berry-shake/cpa-provider-core/provider"
 	"github.com/berry-shake/cpa-provider-core/streamgate"
 	"github.com/berry-shake/cpa-provider-core/upstream"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
@@ -85,7 +86,7 @@ func (s *Service) executeStream(req rpcExecutorRequest) []byte {
 		defer cancel(nil)
 		defer func() { _ = resp.Body.Close() }()
 		var chunks []pluginapi.ExecutorStreamChunk
-		gate := streamgate.New(s.gateConfig(to), sse, resp.Header, func(payload []byte) error {
+		gate := streamgate.New(s.gateConfig(to, call.fix), sse, resp.Header, func(payload []byte) error {
 			chunks = append(chunks, pluginapi.ExecutorStreamChunk{Payload: payload})
 			return nil
 		})
@@ -106,7 +107,7 @@ func (s *Service) executeStream(req rpcExecutorRequest) []byte {
 		idleTimer := time.AfterFunc(idle, func() { cancel(streamgate.ErrIdle) })
 		defer idleTimer.Stop()
 		var emitErr error
-		gate := streamgate.New(s.gateConfig(to), sse, resp.Header, func(payload []byte) error {
+		gate := streamgate.New(s.gateConfig(to, call.fix), sse, resp.Header, func(payload []byte) error {
 			if errEmit := s.emitStream(req.StreamID, payload); errEmit != nil {
 				emitErr = errEmit
 				return errEmit
@@ -129,8 +130,8 @@ func (s *Service) executeStream(req rpcExecutorRequest) []byte {
 }
 
 // gateConfig describes a call's stream to its gate.
-func (s *Service) gateConfig(to target) streamgate.Config {
-	return streamgate.Config{Protocol: to.protocol, Errors: s.errors, Table: s.spec.StreamErrors}
+func (s *Service) gateConfig(to target, fix provider.StreamFix) streamgate.Config {
+	return streamgate.Config{Protocol: to.protocol, Errors: s.errors, Table: s.spec.StreamErrors, Fix: fix}
 }
 
 func (s *Service) emitStream(streamID string, payload []byte) error {

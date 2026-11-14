@@ -2,6 +2,7 @@ package streamgate
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -199,5 +200,122 @@ func TestGateTruncated(t *testing.T) {
 	_ = raw.Push([]byte(`{"partial":`))
 	if failure = raw.Finish(context.Background(), nil); failure != nil {
 		t.Fatalf("raw = %+v", failure)
+	}
+}
+
+// testFix holds back events named "hold" until the next event, renames
+// events named "rename" and ends a stream that stops after output with the
+// events it was given.
+type testFix struct {
+	held    []byte
+	closing [][]byte
+	flushed int
+}
+
+func (f *testFix) Event(event []byte) [][]byte {
+	var out [][]byte
+	if f.held != nil {
+		out, f.held = append(out, f.held), nil
+	}
+	switch NewEvent(event).Name() {
+	case "hold":
+		f.held = event
+		return out
+	case "rename":
+		event = []byte(strings.Replace(string(event), "event: rename", "event: renamed", 1))
+	}
+	return append(out, event)
+}
+
+func (f *testFix) Flush() [][]byte {
+	f.flushed++
+	if f.held == nil {
+		return nil
+	}
+	held := f.held
+	f.held = nil
+	return [][]byte{held}
+}
+
+func (f *testFix) Close() [][]byte { return f.closing }
+
+func TestGateFix(t *testing.T) {
+	delta := "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"text\":\"Hi\"}}\n\n"
+	hold := "event: hold\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"text\":\"held\"}}\n\n"
+	rename := "event: rename\ndata: {\"type\":\"ping\"}\n\n"
+	stop := "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+	var emitted []string
+	var kinds []Kind
+	run := func(fix *testFix, events ...string) *Gate {
+		emitted, kinds = nil, nil
+		config := testConfig(provider.Messages)
+		config.Fix = fix
+		gate := New(config, true, http.Header{}, func(payload []byte) error {
+			emitted = append(emitted, string(payload))
+			return nil
+		})
+		gate.Tap = func(kind Kind, _ *Event) { kinds = append(kinds, kind) }
+		for _, event := range events {
+			if gate.Push([]byte(event)) != nil {
+				break
+			}
+		}
+		return gate
+	}
+
+	// The gate reads what the fix returns: a held event comes out before
+	// the next one, a renamed one under its new name.
+	gate := run(&testFix{}, delta, hold, rename, stop)
+	want := []string{delta, hold, strings.Replace(rename, "rename", "renamed", 1), stop}
+	if strings.Join(emitted, "|") != strings.Join(want, "|") || gate.Finish(context.Background(), nil) != nil {
+		t.Fatalf("emitted %q", emitted)
+	}
+
+	// A held event left at the end is flushed as is; with nothing to close
+	// the stream the stream is truncated.
+	fix := &testFix{}
+	gate = run(fix, delta, hold)
+	if failure := gate.Finish(context.Background(), nil); failure == nil || failure.Code != "stream_truncated" {
+		t.Fatalf("held at the end = %+v", failure)
+	}
+	if len(emitted) != 2 || emitted[1] != hold || fix.flushed != 1 {
+		t.Fatalf("emitted %q, flushed %d", emitted, fix.flushed)
+	}
+
+	// Closing events end the stream normally and go through the fix and the
+	// tap like upstream events.
+	fix = &testFix{closing: [][]byte{[]byte(rename), []byte(stop)}}
+	gate = run(fix, delta)
+	if failure := gate.Finish(context.Background(), nil); failure != nil {
+		t.Fatalf("closed stream = %+v", failure)
+	}
+	if len(emitted) != 3 || !strings.HasPrefix(emitted[1], "event: renamed") || kinds[len(kinds)-1] != Terminal {
+		t.Fatalf("emitted %q, kinds %v", emitted, kinds)
+	}
+
+	// No closing before output, after a pump error or on a raw body.
+	fix = &testFix{closing: [][]byte{[]byte(stop)}}
+	gate = run(fix, "event: message_start\ndata: {\"type\":\"message_start\"}\n\n")
+	if failure := gate.Finish(context.Background(), nil); failure == nil || failure.Code != "stream_truncated" {
+		t.Fatalf("prelude only = %+v", failure)
+	}
+	fix = &testFix{closing: [][]byte{[]byte(stop)}}
+	gate = run(fix, delta, hold)
+	if failure := gate.Finish(context.Background(), errors.New("boom")); failure == nil || failure.Code != "upstream_stream_error" || fix.flushed != 0 {
+		t.Fatalf("pump error = %+v, flushed %d", failure, fix.flushed)
+	}
+	config := testConfig(provider.Messages)
+	config.Fix = &testFix{closing: [][]byte{[]byte(stop)}}
+	raw := New(config, false, http.Header{}, func([]byte) error { return nil })
+	_ = raw.Push([]byte(`{"partial":`))
+	if failure := raw.Finish(context.Background(), nil); failure != nil {
+		t.Fatalf("raw = %+v", failure)
+	}
+}
+
+func TestEventText(t *testing.T) {
+	ev := NewEvent([]byte("event: x\ndata: {\"type\":\"a\\u0062\",\"n\":1}"))
+	if ev.Text("type") != "ab" || ev.Text("n") != "" || ev.Text("missing") != "" {
+		t.Fatalf("Text = %q %q", ev.Text("type"), ev.Text("n"))
 	}
 }

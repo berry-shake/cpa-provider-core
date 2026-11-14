@@ -43,7 +43,10 @@ type configView struct {
 }
 
 type catalogView struct {
-	Count     int    `json:"count"`
+	Count int `json:"count"`
+	// Keys counts the keys whose lists a keyed catalog holds
+	// (provider.KeyedCatalog); omitted for other catalogs.
+	Keys      *int   `json:"keys,omitempty"`
 	Revision  string `json:"revision,omitempty"`
 	FetchedAt string `json:"fetched_at,omitempty"`
 	CheckedAt string `json:"checked_at,omitempty"`
@@ -131,6 +134,10 @@ func (s *Service) status() statusView {
 func catalogSummary(snapshot provider.Catalog) catalogView {
 	summary := snapshot.Summary()
 	view := catalogView{Count: summary.Count, Revision: summary.Revision, LastError: summary.LastError, DetailErrors: summary.DetailErrors}
+	if keyed, ok := snapshot.(provider.KeyedCatalog); ok {
+		keys := keyed.Keys()
+		view.Keys = &keys
+	}
 	if !summary.FetchedAt.IsZero() {
 		view.FetchedAt = summary.FetchedAt.UTC().Format(time.RFC3339)
 	}
@@ -270,15 +277,21 @@ func distinctModels(ids []string, prefix string) int {
 	return len(seen)
 }
 
-// missingModels lists the selected models that are not in the catalog. It is
-// empty for all-model credentials and while no catalog is loaded.
+// missingModels lists the selected models that are not in the catalog (for
+// a keyed catalog: that the key may not register, see KeyedCatalog.KeyHas).
+// It is empty for all-model credentials and while no catalog is loaded.
 func missingModels(cred credential.Credential, snapshot provider.Catalog) []string {
 	if cred.AllModels || empty(snapshot) {
 		return nil
 	}
+	has := snapshot.Has
+	if keyed, ok := snapshot.(provider.KeyedCatalog); ok {
+		key := keyID(cred)
+		has = func(id string) bool { return keyed.KeyHas(key, id) }
+	}
 	var out []string
 	for _, id := range cred.Models {
-		if !snapshot.Has(id) {
+		if !has(id) {
 			out = append(out, id)
 		}
 	}

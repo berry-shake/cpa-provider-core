@@ -7,6 +7,7 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/berry-shake/cpa-provider-core/config"
 	"github.com/berry-shake/cpa-provider-core/credential"
 	"github.com/berry-shake/cpa-provider-core/payload"
+	"github.com/berry-shake/cpa-provider-core/requestlog"
 	"github.com/berry-shake/cpa-provider-core/upstream"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
@@ -99,6 +101,26 @@ type Spec struct {
 	// request is decoded first and then forwarded (TokenCounter) or refused
 	// with "count_tokens is not supported by <DisplayName>".
 	CountTokensRefusal string
+	// QuotaRPC words the quota RPCs the provider's own way (OpenDesign).
+	// The zero value is the core's wording.
+	QuotaRPC QuotaRPC
+}
+
+// QuotaRPC are a provider's own answers of the quota RPCs. They exist only to
+// keep the first migration byte for byte; see the README's round-2 list.
+type QuotaRPC struct {
+	// DecodeError starts the message of a quota.fetch request that does not
+	// decode; empty is "decode quota request" (OpenDesign: "decode quota
+	// fetch request").
+	DecodeError string
+	// RememberHost makes quota.fetch cache the host summary like the auth
+	// and model RPCs do. CPA sends quota.fetch without one, so this wipes the
+	// cached global proxy and force-model-prefix (OpenDesign's behaviour,
+	// kept as is).
+	RememberHost bool
+	// Reset, when set, answers quota.reset with this response instead of a
+	// 501 unsupported_operation error.
+	Reset *pluginapi.QuotaResetResponse
 }
 
 // Texts are the texts each provider words its own way.
@@ -269,6 +291,186 @@ type AccountViewer interface {
 // of Quota.
 type QuotaChecker interface {
 	QuotaError(info any) *pluginabi.Error
+}
+
+// StreamFixer is implemented by adapters whose upstream sends stream events
+// that need repair before they reach the client (OpenDesign's Messages
+// streams). StreamFix is asked once per executor call, after the request
+// scan; a nil StreamFix leaves the call's stream as it is.
+type StreamFixer interface {
+	StreamFix(protocol Protocol, in CallInput) StreamFix
+}
+
+// StreamFix repairs the SSE events of one stream (bodies that are not SSE
+// are passed through untouched). The stream gate hands it every upstream
+// event before reading it and reads what it returns instead, so the gate's
+// hold-back, error and truncation rules and the request log see the repaired
+// stream.
+type StreamFix interface {
+	// Event takes one upstream event and returns the events to read in its
+	// place, in order; none holds it back.
+	Event(event []byte) [][]byte
+	// Flush returns the events still held back when the upstream ended the
+	// stream without an error. The gate reads them as they are, not
+	// through Event.
+	Flush() [][]byte
+	// Close returns the events that end a stream the upstream ended without
+	// an error but also without its terminal event, after output had
+	// started (and after Flush). They go through Event like upstream
+	// events. None reports the stream truncated.
+	Close() [][]byte
+}
+
+// KeyedCatalogSource is implemented by catalog sources that keep one model
+// list per API key (OpenDesign: a key's plan decides which models it may
+// use). The core then loads each key's list through the key's own egress
+// and base URL instead of fetching one catalog:
+//
+//   - model.for_auth and adding a key load the key's list when the catalog
+//     does not hold it yet (KeyedCatalog.KnowsKey); a key without api_key
+//     loads nothing.
+//   - A refresh reloads the list of every distinct key, drops the lists of
+//     keys no auth file has any more (Retain, only when there are auth files
+//     or lists), fails only when no list loaded, and re-registers each
+//     credential whose models were built from an older RevisionFor.
+//   - Registrations, model_revision and the status view's missing models
+//     go by the key (KeyModelInfos, RevisionFor, KeyHas); the status
+//     view's catalog summary adds "keys" (KeyedCatalog.Keys).
+//
+// Keys are named by credential.Fingerprint of the api_key. The source's
+// Current must return a KeyedCatalog; its Fetch is not called.
+type KeyedCatalogSource interface {
+	CatalogSource
+	// FetchKey reloads the list of one key through client. On error it
+	// returns the snapshot it still has (with the error recorded in its
+	// summary unless the request could not be built).
+	FetchKey(ctx context.Context, client *http.Client, baseURL, apiKey, keyID, userAgent string, now time.Time) (Catalog, error)
+	// Retain drops the lists of the keys outside keep and returns the
+	// snapshot.
+	Retain(keep map[string]bool) Catalog
+}
+
+// KeyedCatalog is a snapshot of a KeyedCatalogSource: the union of the
+// keys' lists, which is what Has, UpstreamID and ModelsView read.
+type KeyedCatalog interface {
+	Catalog
+	// KnowsKey reports whether the snapshot holds the key's list.
+	KnowsKey(keyID string) bool
+	// Keys counts the keys whose lists the snapshot holds.
+	Keys() int
+	// RevisionFor is the revision of what one key registers (the whole
+	// catalog's while its list is not loaded), so a change to another key's
+	// list does not re-register it. It is empty while the catalog is.
+	RevisionFor(keyID string) string
+	// KeyModelInfos is ModelInfos for one key: with all, the chat models
+	// its list has (every chat model while it is not loaded).
+	KeyModelInfos(all bool, ids []string, keyID string) []pluginapi.ModelInfo
+	// KeyHas reports whether a key may register a model: the catalog has
+	// it and, once the key's list is loaded, the list has it too.
+	KeyHas(keyID, id string) bool
+}
+
+// HostUser is implemented by adapters that need more of the service than
+// the calls above hand them: their own management routes, quota answers or
+// background work (OpenDesign's account sign-in). The core calls Attach once,
+// while the service is built, before any RPC.
+type HostUser interface {
+	Attach(host Host)
+}
+
+// Host is what the service lends a HostUser.
+type Host interface {
+	// Env is what adapter calls get: the service lifetime and clock, the
+	// User-Agent, the current config and the error mapping.
+	Env() Env
+	// Logf writes to CPA's log. Messages start with the error prefix
+	// ("<id>: "); fields must never hold keys or proxy credentials.
+	Logf(level, message string, fields map[string]any)
+	// AuthFiles lists the provider's credentials with their auth files, as
+	// the status view sees them.
+	AuthFiles() ([]AuthFile, error)
+	// ReadAuthFile reads one auth file by auth index: its fields and the
+	// name SaveAuthFile takes.
+	ReadAuthFile(authIndex string) (fields map[string]any, name string, err error)
+	// SaveAuthFile writes an auth file through CPA, which parses it again
+	// and re-registers its models.
+	SaveAuthFile(name string, fields map[string]any) error
+	// Client returns the HTTP client of the egress a proxy_url resolves to
+	// (the credential's proxy, CPA's global proxy, or the environment); the
+	// error is the proxy_url's validation error as is.
+	Client(proxyURL string) (*http.Client, error)
+	// Usage sums the request log entries of one credential
+	// (requestlog.Log.Usage).
+	Usage(authIndex, authID string, now time.Time) (requestlog.Usage, string)
+}
+
+// AuthFile is one of the provider's credentials known to CPA with its auth
+// file.
+type AuthFile struct {
+	pluginapi.HostAuthFileEntry
+	// Fields and Credential are the auth file as read; both are empty when
+	// ReadError says why it could not be read.
+	Fields     map[string]any
+	Credential credential.Credential
+	ReadError  string
+}
+
+// ManagementExtension is implemented by adapters that serve management
+// routes of their own (OpenDesign's account sign-in). They are declared
+// after the quota route; a request for one of their paths with another
+// method is answered 405 like the core's routes.
+type ManagementExtension interface {
+	ManagementRoutes() []ManagementRoute
+}
+
+// ManagementRoute is one management route an adapter serves.
+type ManagementRoute struct {
+	Method string
+	// Path is relative to the plugin's management base
+	// (/v0/management/plugins/<id>), for example "/account/login".
+	Path        string
+	Description string
+	// Handle answers the route; request bodies are already bounded.
+	Handle func(req pluginapi.ManagementRequest) pluginapi.ManagementResponse
+}
+
+// QuotaFetcher is implemented by adapters that answer CPA's quota panel
+// (quota.fetch) themselves instead of through FetchAccount, QuotaChecker and
+// Quota (OpenDesign shows the plan windows of the account signed in on a
+// key, read by auth index).
+type QuotaFetcher interface {
+	FetchQuota(req pluginapi.QuotaFetchRequest) (pluginapi.QuotaFetchResponse, *pluginabi.Error)
+}
+
+// QuotaPage is implemented by adapters that serve the management page's
+// quota route (GET credentials/quota) themselves instead of through the
+// account query (OpenDesign adds the usage summed from the request log).
+type QuotaPage interface {
+	ServeQuota(req pluginapi.ManagementRequest) pluginapi.ManagementResponse
+}
+
+// JSONResponse is a management answer with a JSON body, as the core's routes
+// send it.
+func JSONResponse(status int, v any) pluginapi.ManagementResponse {
+	raw, errMarshal := json.Marshal(v)
+	if errMarshal != nil {
+		status = http.StatusInternalServerError
+		raw, _ = json.Marshal(ErrorBody{Error: "marshal_failed", Message: errMarshal.Error()})
+	}
+	return pluginapi.ManagementResponse{
+		StatusCode: status,
+		Headers: http.Header{
+			"Content-Type":  []string{"application/json; charset=utf-8"},
+			"Cache-Control": []string{"no-store"},
+		},
+		Body: raw,
+	}
+}
+
+// ErrorBody is the body of a failed management request.
+type ErrorBody struct {
+	Error   string `json:"error"`
+	Message string `json:"message"`
 }
 
 // CatalogSource is a provider's model catalog: the cached snapshot and how to

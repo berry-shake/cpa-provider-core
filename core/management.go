@@ -1,12 +1,12 @@
 package core
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/berry-shake/cpa-provider-core/provider"
 	"github.com/berry-shake/cpa-provider-core/requestlog"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 )
@@ -17,6 +17,7 @@ const maxManagementBody = 1 << 20
 // paths are the management routes and resources of a plugin.
 type paths struct {
 	logo, page, flag                                        string
+	management                                              string
 	status, models, modelsRefresh, credentials, quota, logs string
 	proxies, proxiesCheck, proxiesImport, proxiesOrder      string
 }
@@ -28,6 +29,8 @@ func pathsFor(pluginID string) paths {
 		logo: resource + "/logo.svg",
 		page: resource + "/manage",
 		flag: resource + "/flag.svg",
+
+		management: management,
 
 		status:        management + "/status",
 		models:        management + "/models",
@@ -65,7 +68,7 @@ type managementRegistration struct {
 
 func (s *Service) managementRoutes() managementRegistration {
 	p, texts, name := s.paths, s.spec.Texts, s.spec.DisplayName
-	return managementRegistration{
+	reg := managementRegistration{
 		Routes: []routeDeclaration{
 			{Method: http.MethodGet, Path: p.status, Description: "Plugin status, model catalog summary and " + name + " credentials."},
 			{Method: http.MethodGet, Path: p.models, Description: texts.ModelsRoute},
@@ -73,15 +76,6 @@ func (s *Service) managementRoutes() managementRegistration {
 			{Method: http.MethodPost, Path: p.credentials, Description: texts.AddCredentialRoute},
 			{Method: http.MethodPatch, Path: p.credentials, Description: texts.EditCredentialRoute},
 			{Method: http.MethodGet, Path: p.quota, Description: texts.QuotaRoute},
-			{Method: http.MethodGet, Path: p.logs, Description: "Request log, newest first (?search=&status=all|success|error&from=&to=&request_id=&limit=&offset=), with a summary."},
-			{Method: http.MethodDelete, Path: p.logs, Description: "Clear the request log."},
-			{Method: http.MethodGet, Path: p.proxies, Description: "Proxy list (URLs redacted) and CPA's global proxy."},
-			{Method: http.MethodPost, Path: p.proxies, Description: `Add a proxy. Body: {"name","url"}.`},
-			{Method: http.MethodPatch, Path: p.proxies, Description: `Rename a proxy or change its URL. Body: {"id","name","url"}. Credentials using the old URL move to the new one.`},
-			{Method: http.MethodDelete, Path: p.proxies, Description: "Remove a proxy (?id=). Credentials using it keep its URL."},
-			{Method: http.MethodPost, Path: p.proxiesImport, Description: "Add the proxies " + name + " credentials already use to the list."},
-			{Method: http.MethodPost, Path: p.proxiesOrder, Description: `Reorder the proxy list. Body: {"ids":[...]}.`},
-			{Method: http.MethodPost, Path: p.proxiesCheck, Description: `Look up the exit IP and latency of a proxy. Body: {"id"} or {"target":"direct"|"inherit"}.`},
 		},
 		Resources: []resourceDeclaration{
 			{Path: "/manage", Menu: name, Description: "Manage " + name + " API keys, model selection and egress proxies."},
@@ -89,6 +83,21 @@ func (s *Service) managementRoutes() managementRegistration {
 			{Path: "/flag.svg", Description: "Country flag icon for egress checks (?cc=<ISO 3166-1 alpha-2>)."},
 		},
 	}
+	for _, route := range s.routes {
+		reg.Routes = append(reg.Routes, routeDeclaration{Method: route.Method, Path: p.management + route.Path, Description: route.Description})
+	}
+	reg.Routes = append(reg.Routes, []routeDeclaration{
+		{Method: http.MethodGet, Path: p.logs, Description: "Request log, newest first (?search=&status=all|success|error&from=&to=&request_id=&limit=&offset=), with a summary."},
+		{Method: http.MethodDelete, Path: p.logs, Description: "Clear the request log."},
+		{Method: http.MethodGet, Path: p.proxies, Description: "Proxy list (URLs redacted) and CPA's global proxy."},
+		{Method: http.MethodPost, Path: p.proxies, Description: `Add a proxy. Body: {"name","url"}.`},
+		{Method: http.MethodPatch, Path: p.proxies, Description: `Rename a proxy or change its URL. Body: {"id","name","url"}. Credentials using the old URL move to the new one.`},
+		{Method: http.MethodDelete, Path: p.proxies, Description: "Remove a proxy (?id=). Credentials using it keep its URL."},
+		{Method: http.MethodPost, Path: p.proxiesImport, Description: "Add the proxies " + name + " credentials already use to the list."},
+		{Method: http.MethodPost, Path: p.proxiesOrder, Description: `Reorder the proxy list. Body: {"ids":[...]}.`},
+		{Method: http.MethodPost, Path: p.proxiesCheck, Description: `Look up the exit IP and latency of a proxy. Body: {"id"} or {"target":"direct"|"inherit"}.`},
+	}...)
+	return reg
 }
 
 type errorBody struct {
@@ -142,6 +151,9 @@ func (s *Service) handleManagement(req pluginapi.ManagementRequest) pluginapi.Ma
 		}
 	case p.quota:
 		if method == http.MethodGet {
+			if s.quotaPage != nil {
+				return s.quotaPage.ServeQuota(req)
+			}
 			return s.credentialQuota(req.Query.Get("auth_index"))
 		}
 	case p.logs:
@@ -193,25 +205,34 @@ func (s *Service) handleManagement(req pluginapi.ManagementRequest) pluginapi.Ma
 			return s.checkProxy(req.Body)
 		}
 	default:
+		if resp, known := s.handleExtension(path, method, req); known {
+			return resp
+		}
 		return jsonResponse(http.StatusNotFound, errorBody{Error: "not_found", Message: "plugin route not found"})
 	}
 	return jsonResponse(http.StatusMethodNotAllowed, errorBody{Error: "method_not_allowed", Message: "method not allowed on this route"})
 }
 
+// handleExtension serves the adapter's own routes (provider.ManagementExtension);
+// known is false when none has the path.
+func (s *Service) handleExtension(path, method string, req pluginapi.ManagementRequest) (resp pluginapi.ManagementResponse, known bool) {
+	for _, route := range s.routes {
+		if s.paths.management+route.Path != path {
+			continue
+		}
+		known = true
+		if route.Method == method {
+			return route.Handle(req), true
+		}
+	}
+	if known {
+		return jsonResponse(http.StatusMethodNotAllowed, errorBody{Error: "method_not_allowed", Message: "method not allowed on this route"}), true
+	}
+	return pluginapi.ManagementResponse{}, false
+}
+
 func jsonResponse(status int, v any) pluginapi.ManagementResponse {
-	raw, errMarshal := json.Marshal(v)
-	if errMarshal != nil {
-		status = http.StatusInternalServerError
-		raw, _ = json.Marshal(errorBody{Error: "marshal_failed", Message: errMarshal.Error()})
-	}
-	return pluginapi.ManagementResponse{
-		StatusCode: status,
-		Headers: http.Header{
-			"Content-Type":  []string{"application/json; charset=utf-8"},
-			"Cache-Control": []string{"no-store"},
-		},
-		Body: raw,
-	}
+	return provider.JSONResponse(status, v)
 }
 
 // parseLogTime reads a request log range bound; empty means unbounded.

@@ -81,6 +81,9 @@ type upstreamCall struct {
 	effort        string
 	keyMasked     string
 	egress        string
+	// fix repairs the call's stream (provider.StreamFixer); nil when the
+	// adapter leaves it as it is.
+	fix provider.StreamFix
 }
 
 // prepareCall resolves the credential, egress and upstream model for one
@@ -147,6 +150,10 @@ func (s *Service) prepareCall(req pluginapi.ExecutorRequest, to target) (*upstre
 		header.Del("Anthropic-Beta")
 		header.Del("Anthropic-Version")
 	}
+	var fix provider.StreamFix
+	if s.fixer != nil && !to.countTokens {
+		fix = s.fixer.StreamFix(to.protocol, provider.CallInput{Request: req, Members: members, ScanErr: errScan})
+	}
 	return &upstreamCall{
 		endpoint: to.endpoint,
 		url:      cred.EffectiveBaseURL(cfg) + to.endpoint,
@@ -160,6 +167,7 @@ func (s *Service) prepareCall(req pluginapi.ExecutorRequest, to target) (*upstre
 		effort:        effort,
 		keyMasked:     credential.MaskKey(cred.APIKey),
 		egress:        setting.Label(),
+		fix:           fix,
 	}, nil
 }
 

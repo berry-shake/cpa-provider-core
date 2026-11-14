@@ -4,7 +4,7 @@ CLIProxyAPI 供应商插件（Wokey、Ollama、OpenCode、OpenDesign）共用的
 
 各供应商插件仓库只保留自己的适配器，通过 `go.mod` 引用本模块，并在构建管理页时从本模块拷贝公共前端代码。本仓库不单独发布插件。
 
-目前 Ollama、OpenCode 和 Wokey 已经迁到本模块，OpenDesign 还没有迁。
+四个插件（Ollama、OpenCode、Wokey、OpenDesign）都已经迁到本模块，没有待迁的。
 
 ## 包
 
@@ -17,7 +17,7 @@ CLIProxyAPI 供应商插件（Wokey、Ollama、OpenCode、OpenDesign）共用的
 | `credential` | auth 文件的读取、生成和 CPA auth 数据 |
 | `egress` | 出口解析（凭证代理、CPA 全局代理、直连）、每个出口的 HTTP 客户端和排队 |
 | `proxystore` | 管理页的代理列表（`proxies.json`） |
-| `requestlog` | SQLite 请求日志，含生成速度和端到端速度 |
+| `requestlog` | SQLite 请求日志，含生成速度和端到端速度；按凭证汇总 5 小时、24 小时、7 天、30 天用量（`Usage`） |
 | `streamgate` | SSE 拆分和闸门：首个输出之前的错误事件仍按失败返回，没有结束事件的流报截断 |
 | `payload` | 只在顶层按字节修改请求体，不整体解码 |
 | `upstream` | 上游错误到插件错误的映射、带 Bearer 的 JSON GET、数字读取 |
@@ -57,7 +57,7 @@ type Catalog interface {
 
 - `HeaderDecorator`：`Decorate(header http.Header, in CallInput)`，给执行请求加自己的头。OpenCode 用它加 `X-Opencode-Session`。
 - `TokenCounter`：`CountTokensEndpoint() string`。实现了就把 count_tokens 当 Messages 请求转发，不写请求日志；没实现就回 501 `<id>: count_tokens is not supported by <显示名>`（另见 `Spec.CountTokensRefusal`）。
-- `ErrorRemapper`：`RemapError(status int, code, message string) (mapped int, newMessage string)`，成为 `Env.Errors`（`upstream.Errors.Remap`）的一部分，所有上游错误都先经过它：执行请求的错误回复、流里首个输出之前的错误事件、适配器自己用 `Env.Errors` 发的请求。它拿到上游状态码和从回复体读出的 code、message（已去空白、未截断），返回替换的 message 和要报的状态码，状态码为 0 时走核心的默认映射。Wokey 把 403 `request_blocked`、`model_denylisted` 报成 400；OpenDesign 可以在这里去掉消息前面的 `[code=...] `。
+- `ErrorRemapper`：`RemapError(status int, code, message string) (mapped int, newMessage string)`，成为 `Env.Errors`（`upstream.Errors.Remap`）的一部分，所有上游错误都先经过它：执行请求的错误回复、流里首个输出之前的错误事件、适配器自己用 `Env.Errors` 发的请求。它拿到上游状态码和从回复体读出的 code、message（已去空白、未截断），返回替换的 message 和要报的状态码，状态码为 0 时走核心的默认映射。Wokey 把 403 `request_blocked`、`model_denylisted` 报成 400；OpenDesign 在这里去掉消息前面的 `[code=...] `。
 - `CredentialExtension`：auth 文件里的供应商字段（Wokey 的 `issuer_token`）。
   - `DecodeCredentialInput(body []byte) (any, error)`：核心解码完自己的字段后，从同一个请求体（POST / PATCH credentials）读供应商的字段；出错时按 `invalid_json` 回 400，消息是错误原文（Wokey 的结构体也叫 `credentialInput`，所以类型错误的文案和原来一样）。
   - `ApplyCredentialInput(fields map[string]any, input any) *InputError`：校验并写进 auth 文件字段，位置在 `base_url`、`proxy_url` 之后、`prefix`、`models`、`priority` 之前；返回错误时回 400 `{"error":Code,"message":Message}`。
@@ -65,6 +65,14 @@ type Catalog interface {
   - `CredentialView(cred) []ViewMember`：凭证视图（状态页和保存结果）里加的成员，只对能读出的 auth 文件加。`ViewMember{Name, Value, Before}` 放在名为 `Before` 的成员前面（必须是视图里一定有的成员，比如 `prefix`、`disabled`），`Before` 为空就放在最后。Wokey 在 `prefix` 前加 `issuer_token_masked`。
 - `AccountViewer`：`FetchAccountView(env, client, cred) (info any, complete bool, perr)`，管理页额度路由用它代替 `FetchAccount`（同样在出口轮次里、同样的缓存规则，缓存键是 `AccountKey` 加 ` view`）。Wokey 在这里多查 issuer 余额；CPA 额度面板（quota.fetch）仍然用 `FetchAccount`。
 - `QuotaChecker`：`QuotaError(info any) *pluginabi.Error`，quota.fetch 拿到账号信息后先问它，非 nil 就回这个错误、不画额度条。Wokey 在缺余额或缺用量时报 `balance_unavailable`、`usage_unavailable`。
+- `KeyedCatalogSource`：每个 key 有自己的模型列表（OpenDesign 按套餐列模型）。目录除了 `CatalogSource` 还要实现 `FetchKey(ctx, client, baseURL, apiKey, keyID, userAgent string, now time.Time) (Catalog, error)`（只拉一个 key 的列表，返回整个目录）和 `Retain(keep map[string]bool) Catalog`（丢掉不在 `keep` 里的 key），`Current()` 返回的目录要实现 `KeyedCatalog`：`KnowsKey`、`Keys`、`RevisionFor(keyID)`、`KeyModelInfos(all, ids, keyID)`、`KeyHas(keyID, id)`。`keyID` 是 `credential.Fingerprint(api_key)`。核心照此：注册模型和 `model_revision` 按凭证自己的 key 走（目录还不认识这个 key 时先同步拉一次，失败记 `<id>: model list unavailable`）；后台刷新改成逐个 key 拉（失败记 `model list refresh failed` / `some model lists did not load`），列出的凭证非空或目录里原来有 key 时 `Retain` 掉已经没有凭证的 key（列 auth 文件失败时也会全部丢掉，OpenDesign 原来就这样）；状态页目录摘要在 `count` 后面多一个 `keys`；`unknown_models` 按凭证自己的 key 查。`Fetch` 不会被调用。
+- `StreamFixer`：`StreamFix(protocol Protocol, in CallInput) StreamFix`，在流进闸门之前修补事件（OpenDesign 修 Messages 流）。每次流式请求调一次（count_tokens 不调），返回 nil 就不修。`StreamFix` 有三个方法：`Event(event) [][]byte` 把一个 SSE 事件换成零个或多个事件交给闸门；`Flush() [][]byte` 在上游流正常结束、闸门判断结束之前调用，交出还压着的事件（直接交给闸门，不再经过 `Event`）；`Close() [][]byte` 在已经开始输出、流却没有结束事件、本来要报截断时调用，返回的事件像上游事件一样经过 `Event` 推给闸门（闸门据此认为流已正常结束），返回空就照常报截断。要读请求成员时把成员名加进 `Spec.RequestMembers`，从 `CallInput.Members` 读（`CallInput.ScanErr` 非 nil 时请求体有格式错误）。
+- `HostUser`：`Attach(host Host)`，`New` 时把核心的宿主能力交给适配器，供它自己的管理路由和额度回答用：`Env()`、`Logf`、`AuthFiles()`（本供应商的 auth 文件，`AuthFile` 带解析好的字段、`Credential` 和读取错误 `ReadError`，跳过 runtime-only 和没有 auth_index 的）、`ReadAuthFile(authIndex) (fields, name, err)`、`SaveAuthFile(name, fields)`、`Client(proxyURL)`（凭证出口的 HTTP 客户端，空串时走 CPA 全局代理，不排队）、`Usage(authIndex, authID, now)`（请求日志的用量汇总，第二个返回值是日志不可用的原因）。
+- `ManagementExtension`：`ManagementRoutes() []ManagementRoute`，适配器自己的管理路由。`ManagementRoute{Method, Path, Description, Handle}` 的 `Path` 相对 `/v0/management/plugins/<id>`（比如 `/account/login`），声明顺序在额度路由之后、日志路由之前；同一路径换方法回 405。核心自己的路由优先，不能覆盖。OpenDesign 用它做账号登录、取消、退出。
+- `QuotaFetcher`：`FetchQuota(req pluginapi.QuotaFetchRequest) (pluginapi.QuotaFetchResponse, *pluginabi.Error)`，quota.fetch 整个交给适配器，不再走 `FetchAccount` / `Quota` / `QuotaChecker`（这时 `FetchAccount`、`Quota` 不会被调用，留空实现即可）。OpenDesign 回账号套餐的 5h / 7d 窗口。
+- `QuotaPage`：`ServeQuota(req pluginapi.ManagementRequest) pluginapi.ManagementResponse`，接管管理页的额度路由（`GET .../credentials/quota`）。OpenDesign 回请求日志的用量加账号窗口。
+
+适配器自己回管理请求时用 `provider.JSONResponse(status, v)`（和核心一样的 `Content-Type`、`Cache-Control: no-store`）和 `provider.ErrorBody{Error, Message}`。
 
 `FetchAccount` 在凭证出口的排队轮次里调用；`complete` 为真时结果缓存一分钟，返回错误时 info 丢弃；`AccountKey` 返回空串时不缓存（Wokey）。`VerifyKey` 也在轮次里调用，`ctx` 限定整个检查（20 秒，含排队）。
 
@@ -72,7 +80,7 @@ type Catalog interface {
 
 - `ForwardHeaders`：除了 `Anthropic-Beta`、`Anthropic-Version` 以外要原样转发给上游的客户端请求头。Wokey 转发 `X-End-User-Id`。不能放客户端凭证。
 
-请求日志打开数据目录时会迁移 Wokey 早期留下的文件：库文件（`Profile.Database`）还不存在而 `requests.db`（0.1.7 早期的库名）存在时改名过来，`requests.jsonl`（SQLite 之前的日志）导入一次后删除。其他插件的数据目录里没有这两个文件，什么也不做。
+请求日志打开数据目录时会迁移 Wokey 早期留下的文件：库文件（`Profile.Database`）还不存在而 `requests.db`（0.1.7 早期的库名）存在时改名过来，`requests.jsonl`（SQLite 之前的日志）导入一次后删除。其他插件（包括 OpenDesign）的数据目录里没有这两个文件，什么也不做。
 
 由 `ID` 和 `DisplayName` 推出、各家写法一致的字符串：User-Agent `cpa-<id>-plugin/<版本>`，错误和日志前缀 `<id>: `，请求 ID 头 `X-<显示名>-Cpa-Request-Id`，管理路由 `/v0/management/plugins/<id>/...`，以及状态、代理导入、管理页菜单的说明。写法不一致的放在 `Spec.Texts`。
 
@@ -84,18 +92,8 @@ type Catalog interface {
 - `Spec.RequestMembers`：核心扫描请求体时额外要找的顶层成员。OpenCode 为了算会话 ID 多找 `prompt_cache_key`、`metadata`、`messages`、`input`、`system`、`instructions`。扫描在全部找到后停止，所以成员越多，越可能扫到请求体后面的格式错误；这会影响是否补 `stream_options`、是否记录推理强度。统一时让所有插件扫同一组成员。
 - `Spec.CountTokensRefusal`：count_tokens 的请求解码和拒绝文案。不设时核心先解码执行请求，解码失败回 `invalid_request`，然后转发（`TokenCounter`）或者回 501 `<id>: count_tokens is not supported by <显示名>`（Ollama 和 OpenCode 原来就是这样）。设了就不解码、直接回 501 `<id>: <这段文字>`：Wokey 是 `token counting is not supported`，OpenDesign 迁移时用 `OpenDesign has no token counting endpoint`。统一时去掉这个开关，统一成先解码、同一句文案。
 - Wokey 的 `AccountKey` 返回空串，账号查询不缓存（Ollama 和 OpenCode 缓存一分钟）。统一时改成 key 指纹加查询地址。
-
-## OpenDesign 迁移还需要的接入点
-
-可以直接用的：`ErrorRemapper`（去掉 `[code=...] ` 前缀；注意要在截断之前去，`Remap` 拿到的就是未截断的消息）、`Spec.CountTokensRefusal`、`CredentialExtension.CredentialView`（`account` 块放最后，`Before` 留空；`key_id`、`listed_models` 放在 `disabled` 前面）、`AccountViewer`、`QuotaChecker`、`Service.RefreshTick` 和 `Service.WaitIdleFor`（包一层 `Plugin` 时用）。
-
-还没有做，迁移时在核心里加：
-
-- 按 key 的模型目录（`Fetch` 带 key、`ModelInfos` 带 keyID、按 key 的 revision，目录摘要多一个 `keys` 字段）。`CredentialView` 现在只拿到凭证，要显示 `listed_models` 还得能拿到目录。
-- Messages 流的修补（`redacted_thinking` 改成 `thinking`、带 tool_use 的流把 `end_turn` 改成 `tool_use`、按 `max_tokens` 收尾），需要 `StreamFixer` 一类的接口和 `max_tokens` 请求成员。
-- 账号登录的管理路由（插在额度路由后面）；账号块的登录、退出写的是 auth 文件，不经过 credentials 的录入，`CredentialExtension` 管不到。
-- quota.fetch 的差异：会 `rememberHost`、解码错误文案不同、quota.reset 回成功、用请求日志汇总用量。
-- 测试接缝 `velaAPIURL`、`hostname` 和登录轮询的等待（等待可以包在自己的 `Plugin.WaitIdle` 里）。
+- `Spec.QuotaRPC`：OpenDesign 的 quota RPC 差异。`DecodeError` 是 quota.fetch 解码失败的文案（默认 `decode quota request`，OpenDesign 是 `decode quota fetch request`）；`RememberHost` 让 quota.fetch 像 auth / model 请求一样缓存宿主摘要里的全局代理和 force-model-prefix；`Reset` 设了就让 quota.reset 回这个结果（OpenDesign 回 `success:false` 加说明），不设回 501。注意 `RememberHost` 是 OpenDesign 原来的 bug：CPA 的 quota 请求不带宿主摘要，会把缓存的全局代理清空。统一时去掉 `RememberHost`、统一文案和 quota.reset 的回答。
+- OpenDesign 也用 `StreamErrorsExtended`，`RequestMembers` 加了 `max_tokens`（`StreamFix` 读它）。
 
 ## 快照测试
 

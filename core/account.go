@@ -113,9 +113,18 @@ func (s *Service) checkCredential(cred credential.Credential, check *provider.Cr
 	return pluginapi.ManagementResponse{}, false
 }
 
-// quotaFetch does not call rememberHost: CPA sends quota requests without the
-// host summary, and an empty one would wipe the cached global proxy.
+// quotaFetch answers quota.fetch; an adapter that is a provider.QuotaFetcher
+// answers on its own. Call does not call rememberHost first (unless
+// Spec.QuotaRPC.RememberHost): CPA sends quota requests without the host
+// summary, and an empty one would wipe the cached global proxy.
 func (s *Service) quotaFetch(req pluginapi.QuotaFetchRequest) []byte {
+	if s.quotaFetcher != nil {
+		resp, perr := s.quotaFetcher.FetchQuota(req)
+		if perr != nil {
+			return errorEnvelopeFrom(perr)
+		}
+		return okEnvelope(resp)
+	}
 	cred, _, errCred := credential.FromMaps(req.StorageJSON, req.Metadata)
 	if errCred != nil || cred.APIKey == "" {
 		// Fall back to the auth file on disk when CPA sends no storage.

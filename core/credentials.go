@@ -201,11 +201,8 @@ func (s *Service) addCredential(body []byte) pluginapi.ManagementResponse {
 	}
 	// Load the catalog before saving so the file records the revision its
 	// models are registered from and the background sync leaves it alone.
-	snapshot := s.catalog.Current()
-	if empty(snapshot) {
-		snapshot = s.loadCatalogFor(cred)
-	}
-	if revision := snapshot.Summary().Revision; revision != "" {
+	snapshot := s.catalogFor(cred)
+	if revision := revisionFor(snapshot, cred); revision != "" {
 		fields[credential.KeyModelRevision] = revision
 	}
 	if errSave := s.saveAuthFile(name, fields); errSave != nil {
@@ -257,7 +254,7 @@ func (s *Service) updateCredential(body []byte) pluginapi.ManagementResponse {
 		}
 	}
 	snapshot := s.catalog.Current()
-	if revision := snapshot.Summary().Revision; revision != "" {
+	if revision := revisionFor(snapshot, credential.FromMap(fields)); revision != "" {
 		fields[credential.KeyModelRevision] = revision
 	}
 	if errSave := s.saveAuthFile(name, fields); errSave != nil {

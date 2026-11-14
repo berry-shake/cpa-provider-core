@@ -99,6 +99,12 @@ func (e *Event) present(key string) bool {
 	return value != nil && string(value) != "null"
 }
 
+// Text returns a top-level string member of the data, or "" when it is
+// absent or not a string. Unlike Payload it decodes nothing else.
+func (e *Event) Text(key string) string {
+	return e.stringMember(key)
+}
+
 // stringMember returns a top-level string member, or "".
 func (e *Event) stringMember(key string) string {
 	value := e.Member(key)

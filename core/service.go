@@ -67,8 +67,17 @@ type Service struct {
 	credExt      provider.CredentialExtension
 	viewer       provider.AccountViewer
 	quotaChecker provider.QuotaChecker
-	errors       upstream.Errors
-	paths        paths
+	fixer        provider.StreamFixer
+	quotaFetcher provider.QuotaFetcher
+	quotaPage    provider.QuotaPage
+	// keyed is the catalog when it keeps one model list per key
+	// (provider.KeyedCatalogSource), nil otherwise.
+	keyed provider.KeyedCatalogSource
+	// routes are the adapter's own management routes
+	// (provider.ManagementExtension).
+	routes []provider.ManagementRoute
+	errors upstream.Errors
+	paths  paths
 	// requestMembers are the top-level request members prepareCall reads or
 	// edits; the rest of the body is passed through without being decoded.
 	requestMembers []string
@@ -157,6 +166,13 @@ func NewWithOptions(adapter provider.Adapter, version string, host HostCaller, o
 	svc.credExt, _ = adapter.(provider.CredentialExtension)
 	svc.viewer, _ = adapter.(provider.AccountViewer)
 	svc.quotaChecker, _ = adapter.(provider.QuotaChecker)
+	svc.fixer, _ = adapter.(provider.StreamFixer)
+	svc.quotaFetcher, _ = adapter.(provider.QuotaFetcher)
+	svc.quotaPage, _ = adapter.(provider.QuotaPage)
+	svc.keyed, _ = svc.catalog.(provider.KeyedCatalogSource)
+	if ext, ok := adapter.(provider.ManagementExtension); ok {
+		svc.routes = ext.ManagementRoutes()
+	}
 	if remapper, ok := adapter.(provider.ErrorRemapper); ok {
 		svc.errors.Remap = remapper.RemapError
 	}
@@ -170,6 +186,9 @@ func NewWithOptions(adapter provider.Adapter, version string, host HostCaller, o
 		svc.egressCheckURLs = append([]string(nil), opts.EgressCheckURLs...)
 	}
 	svc.reqlog = requestlog.New(spec.Config.Database, svc.errors.Prefix, func(message string) { svc.logf("warn", message, nil) })
+	if user, ok := adapter.(provider.HostUser); ok {
+		user.Attach(serviceHost{svc})
+	}
 	return svc
 }
 
@@ -322,10 +341,20 @@ func (s *Service) Call(method string, request []byte) []byte {
 	case pluginabi.MethodQuotaFetch:
 		var req rpcQuotaFetchRequest
 		if errUnmarshal := json.Unmarshal(request, &req); errUnmarshal != nil {
-			return ErrorEnvelope("invalid_request", "decode quota request: "+errUnmarshal.Error())
+			decodeError := s.spec.QuotaRPC.DecodeError
+			if decodeError == "" {
+				decodeError = "decode quota request"
+			}
+			return ErrorEnvelope("invalid_request", decodeError+": "+errUnmarshal.Error())
+		}
+		if s.spec.QuotaRPC.RememberHost {
+			s.rememberHost(req.Host)
 		}
 		return s.quotaFetch(req.QuotaFetchRequest)
 	case pluginabi.MethodQuotaReset:
+		if reset := s.spec.QuotaRPC.Reset; reset != nil {
+			return okEnvelope(*reset)
+		}
 		return errorEnvelopeFrom(&pluginabi.Error{Code: "unsupported_operation", Message: s.errors.Prefix + "quota reset is not supported", HTTPStatus: http.StatusNotImplemented})
 
 	default:
@@ -463,13 +492,10 @@ func (s *Service) modelsForAuth(req pluginapi.AuthModelRequest) pluginapi.ModelR
 		s.logf("warn", s.errors.Prefix+"cannot read credential for model registration", map[string]any{"auth_id": req.AuthID, "error": errCred.Error()})
 		return pluginapi.ModelResponse{Provider: s.spec.ID}
 	}
-	snapshot := s.catalog.Current()
-	if empty(snapshot) {
-		snapshot = s.loadCatalogFor(cred)
-	}
-	models := snapshot.ModelInfos(cred.AllModels, cred.Models)
+	snapshot := s.catalogFor(cred)
+	models := modelInfos(snapshot, cred)
 	if req.AuthID != "" {
-		s.registered.Store(req.AuthID, snapshot.Summary().Revision)
+		s.registered.Store(req.AuthID, revisionFor(snapshot, cred))
 	}
 	return pluginapi.ModelResponse{Provider: s.spec.ID, Models: models}
 }

@@ -76,6 +76,9 @@ type Config struct {
 	// Table is the keyword table that tells which HTTP status an error
 	// event stands for.
 	Table provider.StreamErrorTable
+	// Fix, when set, repairs the stream's SSE events before the gate reads
+	// them (provider.StreamFix).
+	Fix provider.StreamFix
 }
 
 // New returns a gate for one stream; emit forwards events to the client.
@@ -92,6 +95,19 @@ func (g *Gate) Push(event []byte) error {
 		}
 		return g.emit(event)
 	}
+	if g.config.Fix == nil {
+		return g.push(event)
+	}
+	for _, fixed := range g.config.Fix.Event(event) {
+		if errPush := g.push(fixed); errPush != nil {
+			return errPush
+		}
+	}
+	return nil
+}
+
+// push reads one SSE event as it is.
+func (g *Gate) push(event []byte) error {
 	ev := NewEvent(event)
 	kind, detail := classifyStreamEvent(g.config.Protocol, ev)
 	if g.Tap != nil {
@@ -141,6 +157,15 @@ func (g *Gate) flush() error {
 // Finish reports how the stream ended: nil when the response is complete,
 // otherwise the error to close the host stream with.
 func (g *Gate) Finish(ctx context.Context, errPump error) *pluginabi.Error {
+	fix := g.config.Fix
+	if fix != nil && g.sse && errPump == nil && g.failure == nil {
+		for _, held := range fix.Flush() {
+			if errPush := g.push(held); errPush != nil {
+				errPump = errPush
+				break
+			}
+		}
+	}
 	switch {
 	case g.failure != nil:
 		return g.failure
@@ -149,6 +174,17 @@ func (g *Gate) Finish(ctx context.Context, errPump error) *pluginabi.Error {
 	case errPump != nil:
 		return streamFailure(ctx, errPump, g.config.Errors.Prefix)
 	case !g.sse:
+		return nil
+	case fix != nil && g.open:
+		closing := fix.Close()
+		if len(closing) == 0 {
+			return streamTruncated(g.config.Errors.Prefix)
+		}
+		for _, event := range closing {
+			if errPush := g.Push(event); errPush != nil {
+				return streamFailure(ctx, errPush, g.config.Errors.Prefix)
+			}
+		}
 		return nil
 	default:
 		return streamTruncated(g.config.Errors.Prefix)
