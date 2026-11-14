@@ -201,3 +201,14 @@ func TestSaveName(t *testing.T) {
 		}
 	}
 }
+
+// A file without api_key is named in the error; auth.refresh names none.
+func TestAuthDataWithoutKey(t *testing.T) {
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	if _, errAuth := AuthData("ollama", map[string]any{"type": "ollama"}, nil, " k1.json ", now, ""); errAuth == nil || errAuth.Error() != "ollama auth file k1.json has no api_key" {
+		t.Fatalf("named = %v", errAuth)
+	}
+	if _, errAuth := AuthData("ollama", map[string]any{"type": "ollama"}, nil, "", now, ""); errAuth == nil || errAuth.Error() != "ollama auth file has no api_key" {
+		t.Fatalf("unnamed = %v", errAuth)
+	}
+}

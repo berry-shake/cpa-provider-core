@@ -196,7 +196,11 @@ func ParseAuthFile(providerID string, req pluginapi.AuthParseRequest, now time.T
 func AuthData(providerID string, fields map[string]any, raw []byte, fileName string, now time.Time, defaultPrefix string) (pluginapi.AuthData, error) {
 	cred := FromMap(fields)
 	if cred.APIKey == "" {
-		return pluginapi.AuthData{}, fmt.Errorf("%s auth file %s has no api_key", providerID, strings.TrimSpace(fileName))
+		if name := strings.TrimSpace(fileName); name != "" {
+			return pluginapi.AuthData{}, fmt.Errorf("%s auth file %s has no api_key", providerID, name)
+		}
+		// auth.refresh names no file.
+		return pluginapi.AuthData{}, fmt.Errorf("%s auth file has no api_key", providerID)
 	}
 	metadata := make(map[string]any, len(fields)+1)
 	for key, value := range fields {
