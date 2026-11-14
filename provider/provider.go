@@ -51,18 +51,6 @@ func ProtocolForFormat(format string) (Protocol, bool) {
 	}
 }
 
-// StreamErrorTable picks the keyword table that tells which HTTP status an
-// error event inside a stream stands for.
-type StreamErrorTable int
-
-const (
-	// StreamErrorsBase is the table of Ollama and Wokey.
-	StreamErrorsBase StreamErrorTable = iota
-	// StreamErrorsExtended adds the words OpenCode and OpenDesign report
-	// (budget and usage limits, insufficient funds, MissingSession, ...).
-	StreamErrorsExtended
-)
-
 // Spec is what a provider declares about itself. The IDs, names and texts end
 // up in CPA's plugin list, the management routes, error messages and logs;
 // strings the plugins word the same way are derived from ID and DisplayName
@@ -84,8 +72,6 @@ type Spec struct {
 	Logo func() []byte
 	// Texts are the provider-specific texts.
 	Texts Texts
-	// StreamErrors is the keyword table for errors inside a stream.
-	StreamErrors StreamErrorTable
 	// RequestMembers are top-level request members Decorate reads besides
 	// the ones the core reads (model, stream_options and the reasoning
 	// settings). They change where the request scan stops, so they are

@@ -131,7 +131,7 @@ func (s *Service) executeStream(req rpcExecutorRequest) []byte {
 
 // gateConfig describes a call's stream to its gate.
 func (s *Service) gateConfig(to target, fix provider.StreamFix) streamgate.Config {
-	return streamgate.Config{Protocol: to.protocol, Errors: s.errors, Table: s.spec.StreamErrors, Fix: fix}
+	return streamgate.Config{Protocol: to.protocol, Errors: s.errors, Fix: fix}
 }
 
 func (s *Service) emitStream(streamID string, payload []byte) error {

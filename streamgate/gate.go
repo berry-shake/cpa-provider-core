@@ -73,9 +73,6 @@ type Config struct {
 	// it stands for, to the plugin error the call fails with, the same way
 	// as an HTTP error; its prefix also starts the gate's own errors.
 	Errors upstream.Errors
-	// Table is the keyword table that tells which HTTP status an error
-	// event stands for.
-	Table provider.StreamErrorTable
 	// Fix, when set, repairs the stream's SSE events before the gate reads
 	// them (provider.StreamFix).
 	Fix provider.StreamFix
@@ -117,7 +114,7 @@ func (g *Gate) push(event []byte) error {
 	case Failed:
 		if !g.open {
 			g.held = nil
-			g.failure = g.config.Errors.Upstream(streamErrorStatus(detail, g.config.Table), g.header, detail)
+			g.failure = g.config.Errors.Upstream(streamErrorStatus(detail), g.header, detail)
 			return errStreamRejected
 		}
 		// After output has started the client gets the error event as is.
@@ -297,7 +294,7 @@ func responseFailure(payload map[string]any) []byte {
 
 // streamErrorStatus picks the HTTP status an in-stream error stands for, so
 // the error mapping maps it the same way as the matching HTTP error.
-func streamErrorStatus(body []byte, table provider.StreamErrorTable) int {
+func streamErrorStatus(body []byte) int {
 	var payload map[string]any
 	_ = json.Unmarshal(body, &payload)
 	scopes := []map[string]any{payload}
@@ -318,11 +315,7 @@ func streamErrorStatus(body []byte, table provider.StreamErrorTable) int {
 		}
 	}
 	text := strings.Join(names, " ")
-	rules := streamErrorRules
-	if table == provider.StreamErrorsExtended {
-		rules = extendedStreamErrorRules
-	}
-	for _, rule := range rules {
+	for _, rule := range streamErrorRules {
 		for _, word := range rule.words {
 			if strings.Contains(text, word) {
 				return rule.status
@@ -337,21 +330,12 @@ type streamErrorRule struct {
 	words  []string
 }
 
-// streamErrorRules is the base keyword table (Ollama, Wokey).
+// streamErrorRules map the code and type words of an in-stream error to the
+// HTTP status it stands for, first match wins. One table serves every
+// provider: besides the common words it has the ones OpenCode and OpenDesign
+// report (budget and usage limits, insufficient funds, AuthError,
+// MissingSession).
 var streamErrorRules = []streamErrorRule{
-	{http.StatusPaymentRequired, []string{"insufficient_balance", "insufficient_quota", "billing"}},
-	{http.StatusTooManyRequests, []string{"rate_limit", "too_many_requests"}},
-	{529, []string{"overloaded"}},
-	{http.StatusUnauthorized, []string{"authentication", "invalid_api_key", "unauthorized"}},
-	{http.StatusForbidden, []string{"request_blocked", "model_denylisted", "account_restricted", "permission"}},
-	{http.StatusNotFound, []string{"not_found"}},
-	{http.StatusGatewayTimeout, []string{"timeout"}},
-	{http.StatusBadRequest, []string{"invalid_request", "context_length", "too_large"}},
-}
-
-// extendedStreamErrorRules adds the error words OpenCode and OpenDesign
-// report to the base table.
-var extendedStreamErrorRules = []streamErrorRule{
 	{http.StatusPaymentRequired, []string{"insufficient_balance", "insufficient_quota", "insufficient_funds", "insufficient account funds", "billing"}},
 	{http.StatusTooManyRequests, []string{"rate_limit", "rate-limited", "too_many_requests", "budget exceeded", "budget_exceeded", "usage_limit", "usage limit"}},
 	{529, []string{"overloaded"}},

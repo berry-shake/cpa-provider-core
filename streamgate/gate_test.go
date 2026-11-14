@@ -66,14 +66,15 @@ func TestStreamErrorStatus(t *testing.T) {
 		`{"type":"error","error":{"type":"api_error","message":"Internal server error"}}`: http.StatusBadGateway,
 		`not json`: http.StatusBadGateway,
 	} {
-		if got := streamErrorStatus([]byte(body), provider.StreamErrorsBase); got != want {
+		if got := streamErrorStatus([]byte(body)); got != want {
 			t.Errorf("streamErrorStatus(%s) = %d, want %d", body, got, want)
 		}
 	}
 }
 
-// The extended table adds the words OpenCode and OpenDesign report.
-func TestStreamErrorStatusExtended(t *testing.T) {
+// The table also has the words OpenCode and OpenDesign report, for every
+// provider.
+func TestStreamErrorStatusProviderWords(t *testing.T) {
 	for body, want := range map[string]int{
 		`{"error":{"type":"budget_exceeded"}}`:       http.StatusTooManyRequests,
 		`{"error":{"code":"insufficient_funds"}}`:    http.StatusPaymentRequired,
@@ -81,12 +82,9 @@ func TestStreamErrorStatusExtended(t *testing.T) {
 		`{"error":{"type":"MissingSessionID"}}`:      http.StatusBadRequest,
 		`{"error":{"code":"rate_limit","type":"x"}}`: http.StatusTooManyRequests,
 	} {
-		if got := streamErrorStatus([]byte(body), provider.StreamErrorsExtended); got != want {
-			t.Errorf("extended streamErrorStatus(%s) = %d, want %d", body, got, want)
+		if got := streamErrorStatus([]byte(body)); got != want {
+			t.Errorf("streamErrorStatus(%s) = %d, want %d", body, got, want)
 		}
-	}
-	if got := streamErrorStatus([]byte(`{"error":{"type":"budget_exceeded"}}`), provider.StreamErrorsBase); got != http.StatusBadGateway {
-		t.Errorf("base table read an extended word: %d", got)
 	}
 }
 
