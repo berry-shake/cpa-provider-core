@@ -189,17 +189,10 @@ func (s *Service) execute(req pluginapi.ExecutorRequest) []byte {
 	return s.executeBuffered(req, to)
 }
 
-// countTokens forwards an Anthropic count_tokens request when the adapter
-// is a provider.TokenCounter and rejects it otherwise. It is not written to
+// countTokens forwards an Anthropic count_tokens request to the adapter's
+// provider.TokenCounter (Call refuses it without one). It is not written to
 // the request log: it generates nothing and costs nothing.
 func (s *Service) countTokens(req pluginapi.ExecutorRequest) []byte {
-	if s.counter == nil {
-		return errorEnvelopeFrom(&pluginabi.Error{
-			Code:       "unsupported_operation",
-			Message:    s.errors.Prefix + "count_tokens is not supported by " + s.spec.DisplayName,
-			HTTPStatus: http.StatusNotImplemented,
-		})
-	}
 	return s.executeBuffered(req, target{protocol: provider.Messages, endpoint: s.counter.CountTokensEndpoint(), countTokens: true})
 }
 

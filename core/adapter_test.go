@@ -80,8 +80,7 @@ func (a *testAdapter) Spec() provider.Spec {
 			LoginStart: "Wokey uses API keys",
 			QuotaRoute: "Balance and key usage.",
 		},
-		ForwardHeaders:     []string{"X-End-User-Id"},
-		CountTokensRefusal: "token counting is not supported",
+		ForwardHeaders: []string{"X-End-User-Id"},
 	}
 }
 

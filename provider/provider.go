@@ -81,12 +81,6 @@ type Spec struct {
 	// besides Anthropic-Beta and Anthropic-Version (Wokey's X-End-User-Id).
 	// Client credentials must never be listed.
 	ForwardHeaders []string
-	// CountTokensRefusal, when set, answers executor.count_tokens with a 501
-	// whose message is the error prefix and this text, before the request is
-	// decoded (Wokey: "token counting is not supported"). Without it the
-	// request is decoded first and then forwarded (TokenCounter) or refused
-	// with "count_tokens is not supported by <DisplayName>".
-	CountTokensRefusal string
 	// QuotaRPC words the quota RPCs the provider's own way (OpenDesign).
 	// The zero value is the core's wording.
 	QuotaRPC QuotaRPC
@@ -194,7 +188,8 @@ type HeaderDecorator interface {
 }
 
 // TokenCounter is implemented by adapters whose upstream counts Messages
-// tokens. Without it executor.count_tokens answers 501.
+// tokens. Without it executor.count_tokens answers 501 "<id>: count_tokens
+// is not supported by <DisplayName>" without decoding the request.
 type TokenCounter interface {
 	// CountTokensEndpoint is the path count_tokens requests are forwarded
 	// to. They are sent like Messages requests and not written to the

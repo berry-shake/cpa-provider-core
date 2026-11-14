@@ -184,8 +184,8 @@ func TestExecuteErrors(t *testing.T) {
 	}
 }
 
-// Wokey's count_tokens rejects every request, so the plugin answers 501
-// without calling it.
+// Without a TokenCounter count_tokens answers 501 without calling the
+// upstream or decoding the request.
 func TestCountTokensUnsupported(t *testing.T) {
 	upstream := newFakeWokey(t)
 	seen := make(chan observedRequest, 1)
@@ -197,9 +197,13 @@ func TestCountTokensUnsupported(t *testing.T) {
 	for _, format := range []string{"claude", "openai"} {
 		request, _ := json.Marshal(rpcExecutorRequest{ExecutorRequest: executorRequest(format, "wokey/model-a", `{"model":"wokey/model-a"}`)})
 		envelope := decodeEnvelope(t, svc.Call(pluginabi.MethodExecutorCountTokens, request))
-		if envelope.OK || envelope.Error.HTTPStatus != http.StatusNotImplemented || envelope.Error.Code != "unsupported_operation" {
+		if envelope.OK || envelope.Error.HTTPStatus != http.StatusNotImplemented || envelope.Error.Code != "unsupported_operation" ||
+			envelope.Error.Message != "wokey: count_tokens is not supported by Wokey" {
 			t.Fatalf("%s count_tokens: %+v", format, envelope.Error)
 		}
+	}
+	if envelope := decodeEnvelope(t, svc.Call(pluginabi.MethodExecutorCountTokens, []byte("not json"))); envelope.OK || envelope.Error.Code != "unsupported_operation" {
+		t.Fatalf("undecodable count_tokens: %+v", envelope.Error)
 	}
 	select {
 	case got := <-seen:

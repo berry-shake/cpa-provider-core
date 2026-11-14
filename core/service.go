@@ -307,8 +307,14 @@ func (s *Service) Call(method string, request []byte) []byte {
 		}
 		return s.executeStream(req)
 	case pluginabi.MethodExecutorCountTokens:
-		if s.spec.CountTokensRefusal != "" {
-			return errorEnvelopeFrom(&pluginabi.Error{Code: "unsupported_operation", Message: s.errors.Prefix + s.spec.CountTokensRefusal, HTTPStatus: http.StatusNotImplemented})
+		if s.counter == nil {
+			// Refused before the request is decoded: there is nothing to
+			// check it against.
+			return errorEnvelopeFrom(&pluginabi.Error{
+				Code:       "unsupported_operation",
+				Message:    s.errors.Prefix + "count_tokens is not supported by " + s.spec.DisplayName,
+				HTTPStatus: http.StatusNotImplemented,
+			})
 		}
 		var req rpcExecutorRequest
 		if errUnmarshal := json.Unmarshal(request, &req); errUnmarshal != nil {
