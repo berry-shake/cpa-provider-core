@@ -25,7 +25,19 @@ const MaxErrorBodyBytes = 2048
 type Errors struct {
 	// Prefix starts every message: the provider ID and ": " ("ollama: ").
 	Prefix string
+	// Remap, when set, adjusts how Upstream maps an error answer; see Remap.
+	Remap Remap
 }
+
+// Remap is a provider's own rule for upstream error answers. It gets the
+// upstream status and the code and message read from the body (the message
+// trimmed but not yet truncated; both empty when the body has none) and
+// returns the message to report instead and the status to map to. A mapped
+// status of 0 keeps the default mapping of Upstream.
+//
+// Wokey reports 403 request_blocked and model_denylisted as 400; OpenDesign
+// drops the "[code=...] " prefix OpenAI-style messages repeat.
+type Remap func(status int, code, message string) (mapped int, newMessage string)
 
 // Upstream converts a non-2xx upstream answer into a plugin error whose
 // HTTP status drives CPA's credential cooldown:
@@ -37,20 +49,17 @@ type Errors struct {
 //   - 529 (overloaded) becomes 503 (transient); 499 (the caller went away)
 //     becomes 408; anything outside 4xx and 5xx becomes 502.
 //   - 429 keeps Retry-After so CPA waits exactly that long.
+//
+// Remap, when set, sees the answer first and may choose the status itself.
 func (e Errors) Upstream(status int, header http.Header, body []byte) *pluginabi.Error {
 	code, message := parseBody(body)
-	mapped := status
-	switch {
-	case status == http.StatusNotFound:
-		mapped = http.StatusBadRequest
-	case status == 529:
-		mapped = http.StatusServiceUnavailable
-	case status == 499:
-		// downstream_aborted: the caller went away; report it as a timeout-like
-		// transient failure rather than a client error on a healthy key.
-		mapped = http.StatusRequestTimeout
-	case status < 400 || status > 599:
-		mapped = http.StatusBadGateway
+	mapped := 0
+	if e.Remap != nil {
+		mapped, message = e.Remap(status, code, message)
+	}
+	message = Truncate(message, MaxErrorBodyBytes)
+	if mapped == 0 {
+		mapped = defaultStatus(status)
 	}
 	if code == "" {
 		code = "upstream_" + strconv.Itoa(status)
@@ -73,10 +82,29 @@ func (e Errors) Upstream(status int, header http.Header, body []byte) *pluginabi
 	return err
 }
 
+// defaultStatus is the status Upstream maps an upstream status to.
+func defaultStatus(status int) int {
+	mapped := status
+	switch {
+	case status == http.StatusNotFound:
+		mapped = http.StatusBadRequest
+	case status == 529:
+		mapped = http.StatusServiceUnavailable
+	case status == 499:
+		// downstream_aborted: the caller went away; report it as a timeout-like
+		// transient failure rather than a client error on a healthy key.
+		mapped = http.StatusRequestTimeout
+	case status < 400 || status > 599:
+		mapped = http.StatusBadGateway
+	}
+	return mapped
+}
+
 // parseBody extracts a code and message from the error shapes the
 // upstreams use: {"error":"message"}, OpenAI style
 // {"error":{"code","type","message"}}, Anthropic style
 // {"type":"error","error":{"type","message"}} and flat {"code","message"}.
+// The message is trimmed, not truncated.
 func parseBody(body []byte) (string, string) {
 	var parsed struct {
 		Code    any    `json:"code"`
@@ -103,7 +131,7 @@ func parseBody(body []byte) (string, string) {
 			message = strings.TrimSpace(inner)
 		}
 	}
-	return code, Truncate(message, MaxErrorBodyBytes)
+	return code, message
 }
 
 // retryAfterSeconds parses Retry-After as delta seconds or an HTTP date.

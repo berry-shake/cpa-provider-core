@@ -59,11 +59,19 @@ func (s *Service) verifyKey(cred credential.Credential) *pluginabi.Error {
 
 // fetchAccount loads what the adapter reports about the account behind a
 // key, in a turn of the key's egress; time spent waiting for the turn does
-// not count toward the calls' timeouts. A complete answer is reused for
-// accountCacheTTL.
-func (s *Service) fetchAccount(cred credential.Credential) (any, *pluginabi.Error) {
+// not count toward the calls' timeouts. With view set it is the management
+// page's query (provider.AccountViewer when implemented). A complete answer
+// is reused for accountCacheTTL unless the adapter's AccountKey is empty.
+func (s *Service) fetchAccount(cred credential.Credential, view bool) (any, *pluginabi.Error) {
 	env := s.env()
+	fetch := s.adapter.FetchAccount
 	cacheKey := s.adapter.AccountKey(env, cred)
+	if view && s.viewer != nil {
+		fetch = s.viewer.FetchAccountView
+		if cacheKey != "" {
+			cacheKey += " view"
+		}
+	}
 	if info, ok := s.accounts.get(cacheKey, s.now()); ok {
 		return info, nil
 	}
@@ -76,14 +84,33 @@ func (s *Service) fetchAccount(cred credential.Credential) (any, *pluginabi.Erro
 	if info, ok := s.accounts.get(cacheKey, s.now()); ok {
 		return info, nil
 	}
-	info, complete, perr := s.adapter.FetchAccount(env, client, cred)
+	info, complete, perr := fetch(env, client, cred)
 	if perr != nil {
 		return nil, perr
 	}
-	if complete {
+	if complete && cacheKey != "" {
 		s.accounts.put(cacheKey, info, s.now())
 	}
 	return info, nil
+}
+
+// checkCredential runs an adapter's provider.CredentialCheck in a turn of
+// the key's egress and turns a failure into the management answer.
+func (s *Service) checkCredential(cred credential.Credential, check *provider.CredentialCheck) (pluginapi.ManagementResponse, bool) {
+	ctx, cancel := context.WithTimeout(s.ctx, provider.AccountCallTimeout)
+	defer cancel()
+	perr := func() *pluginabi.Error {
+		client, release, perr := s.accountTurn(ctx, cred.ProxyURL)
+		if perr != nil {
+			return perr
+		}
+		defer release()
+		return check.Run(ctx, s.env(), client)
+	}()
+	if perr != nil {
+		return jsonResponse(verifyStatus(perr), errorBody{Error: check.Code, Message: perr.Message}), true
+	}
+	return pluginapi.ManagementResponse{}, false
 }
 
 // quotaFetch does not call rememberHost: CPA sends quota requests without the
@@ -99,9 +126,14 @@ func (s *Service) quotaFetch(req pluginapi.QuotaFetchRequest) []byte {
 	if cred.APIKey == "" {
 		return errorEnvelopeFrom(upstream.AuthError(s.errors.Prefix + "credential has no api_key"))
 	}
-	info, perr := s.fetchAccount(cred)
+	info, perr := s.fetchAccount(cred, false)
 	if perr != nil {
 		return errorEnvelopeFrom(perr)
+	}
+	if s.quotaChecker != nil {
+		if perr := s.quotaChecker.QuotaError(info); perr != nil {
+			return errorEnvelopeFrom(perr)
+		}
 	}
 	return okEnvelope(s.adapter.Quota(info))
 }
@@ -118,6 +150,9 @@ type accountCacheEntry struct {
 }
 
 func (c *accountCache) get(key string, now time.Time) (any, bool) {
+	if key == "" {
+		return nil, false
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	entry, ok := c.entries[key]

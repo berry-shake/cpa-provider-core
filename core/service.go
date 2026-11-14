@@ -63,11 +63,17 @@ type Service struct {
 	catalog   provider.CatalogSource
 	decorator provider.HeaderDecorator
 	counter   provider.TokenCounter
-	errors    upstream.Errors
-	paths     paths
+	// The other optional interfaces of the adapter; nil when not implemented.
+	credExt      provider.CredentialExtension
+	viewer       provider.AccountViewer
+	quotaChecker provider.QuotaChecker
+	errors       upstream.Errors
+	paths        paths
 	// requestMembers are the top-level request members prepareCall reads or
 	// edits; the rest of the body is passed through without being decoded.
 	requestMembers []string
+	// forwardHeaders are the client headers prepareCall passes on.
+	forwardHeaders []string
 	// requestIDHeader carries CPA's request ID from the interceptor to the
 	// executor (see interceptor.go).
 	requestIDHeader string
@@ -130,6 +136,7 @@ func NewWithOptions(adapter provider.Adapter, version string, host HostCaller, o
 		errors:          upstream.Errors{Prefix: spec.ID + ": "},
 		paths:           pathsFor(spec.ID),
 		requestMembers:  append(append([]string(nil), coreRequestMembers...), spec.RequestMembers...),
+		forwardHeaders:  append(append([]string(nil), forwardedRequestHeaders...), spec.ForwardHeaders...),
 		requestIDHeader: "X-" + spec.DisplayName + "-Cpa-Request-Id",
 
 		version:      version,
@@ -147,6 +154,12 @@ func NewWithOptions(adapter provider.Adapter, version string, host HostCaller, o
 	}
 	svc.decorator, _ = adapter.(provider.HeaderDecorator)
 	svc.counter, _ = adapter.(provider.TokenCounter)
+	svc.credExt, _ = adapter.(provider.CredentialExtension)
+	svc.viewer, _ = adapter.(provider.AccountViewer)
+	svc.quotaChecker, _ = adapter.(provider.QuotaChecker)
+	if remapper, ok := adapter.(provider.ErrorRemapper); ok {
+		svc.errors.Remap = remapper.RemapError
+	}
 	if opts.Now != nil {
 		svc.now = opts.Now
 	}
@@ -275,6 +288,9 @@ func (s *Service) Call(method string, request []byte) []byte {
 		}
 		return s.executeStream(req)
 	case pluginabi.MethodExecutorCountTokens:
+		if s.spec.CountTokensRefusal != "" {
+			return errorEnvelopeFrom(&pluginabi.Error{Code: "unsupported_operation", Message: s.errors.Prefix + s.spec.CountTokensRefusal, HTTPStatus: http.StatusNotImplemented})
+		}
 		var req rpcExecutorRequest
 		if errUnmarshal := json.Unmarshal(request, &req); errUnmarshal != nil {
 			return ErrorEnvelope("invalid_request", "decode executor request: "+errUnmarshal.Error())

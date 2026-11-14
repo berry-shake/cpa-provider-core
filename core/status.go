@@ -1,8 +1,11 @@
 package core
 
 import (
+	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -77,6 +80,18 @@ type credentialView struct {
 	Success          int64    `json:"success"`
 	Failed           int64    `json:"failed"`
 	ReadError        string   `json:"read_error,omitempty"`
+	// extras are the adapter's members (provider.CredentialExtension).
+	extras []provider.ViewMember
+}
+
+// MarshalJSON encodes the view with the adapter's members in place.
+func (v credentialView) MarshalJSON() ([]byte, error) {
+	type plain credentialView
+	raw, errMarshal := json.Marshal(plain(v))
+	if errMarshal != nil || len(v.extras) == 0 {
+		return raw, errMarshal
+	}
+	return withMembers(raw, v.extras)
 }
 
 func (s *Service) status() statusView {
@@ -108,7 +123,7 @@ func (s *Service) status() statusView {
 	snapshot := s.catalog.Current()
 	proxies, _ := s.proxies.List()
 	for _, entry := range entries {
-		view.Credentials = append(view.Credentials, credentialViewOf(entry, cfg, snapshot, registered, proxies))
+		view.Credentials = append(view.Credentials, s.credentialViewOf(entry, cfg, snapshot, registered, proxies))
 	}
 	return view
 }
@@ -140,7 +155,7 @@ func (emptyCatalog) ModelInfos(bool, []string) []pluginapi.ModelInfo { return []
 func (emptyCatalog) UpstreamID(model, _ string) string               { return model }
 func (emptyCatalog) ModelsView() any                                 { return []struct{}{} }
 
-func credentialViewOf(entry authEntry, cfg config.Config, snapshot provider.Catalog, registered map[string][]string, proxies proxystore.List) credentialView {
+func (s *Service) credentialViewOf(entry authEntry, cfg config.Config, snapshot provider.Catalog, registered map[string][]string, proxies proxystore.List) credentialView {
 	view := credentialView{
 		AuthIndex:     entry.AuthIndex,
 		ID:            entry.ID,
@@ -189,7 +204,57 @@ func credentialViewOf(entry authEntry, cfg config.Config, snapshot provider.Cata
 		view.Models = append(view.Models, cred.Models...)
 	}
 	view.MissingModels = missingModels(cred, snapshot)
+	if s.credExt != nil {
+		view.extras = s.credExt.CredentialView(cred)
+	}
 	return view
+}
+
+// withMembers inserts members into a JSON object encoded by encoding/json:
+// each before the top-level member named by its Before (looked up in raw as
+// given), or last.
+func withMembers(raw []byte, members []provider.ViewMember) ([]byte, error) {
+	type insertion struct {
+		at   int
+		data []byte
+	}
+	insertions := make([]insertion, 0, len(members))
+	for _, member := range members {
+		name, errName := json.Marshal(member.Name)
+		if errName != nil {
+			return nil, errName
+		}
+		value, errValue := json.Marshal(member.Value)
+		if errValue != nil {
+			return nil, errValue
+		}
+		at := len(raw) - 1
+		if member.Before != "" {
+			key, _ := json.Marshal(member.Before)
+			// A top-level member after the first is preceded by a comma; a
+			// comma and quote cannot occur next to each other inside a string.
+			if i := bytes.Index(raw, append(append([]byte{','}, key...), ':')); i >= 0 {
+				at = i
+			}
+		}
+		data := append(append(append([]byte{','}, name...), ':'), value...)
+		if at > 0 && raw[at-1] == '{' {
+			data = data[1:]
+			if raw[at] != '}' {
+				data = append(data, ',')
+			}
+		}
+		insertions = append(insertions, insertion{at: at, data: data})
+	}
+	sort.SliceStable(insertions, func(i, j int) bool { return insertions[i].at < insertions[j].at })
+	out := make([]byte, 0, len(raw)+64*len(insertions))
+	prev := 0
+	for _, in := range insertions {
+		out = append(out, raw[prev:in.at]...)
+		out = append(out, in.data...)
+		prev = in.at
+	}
+	return append(out, raw[prev:]...), nil
 }
 
 // distinctModels counts registered models once each: unless CPA forces the

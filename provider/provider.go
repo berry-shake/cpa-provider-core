@@ -89,6 +89,16 @@ type Spec struct {
 	// settings). They change where the request scan stops, so they are
 	// only listed by providers that need them.
 	RequestMembers []string
+	// ForwardHeaders are client request headers passed on to the upstream
+	// besides Anthropic-Beta and Anthropic-Version (Wokey's X-End-User-Id).
+	// Client credentials must never be listed.
+	ForwardHeaders []string
+	// CountTokensRefusal, when set, answers executor.count_tokens with a 501
+	// whose message is the error prefix and this text, before the request is
+	// decoded (Wokey: "token counting is not supported"). Without it the
+	// request is decoded first and then forwarded (TokenCounter) or refused
+	// with "count_tokens is not supported by <DisplayName>".
+	CountTokensRefusal string
 }
 
 // Texts are the texts each provider words its own way.
@@ -146,7 +156,8 @@ type Adapter interface {
 	// whole check (AccountCallTimeout, the wait for the turn included).
 	VerifyKey(ctx context.Context, env Env, client *http.Client, cred credential.Credential) *pluginabi.Error
 	// AccountKey identifies the account answer for a credential in the
-	// account cache (a key fingerprint and the URL it is read from).
+	// account cache (a key fingerprint and the URL it is read from). An
+	// empty key keeps the answers out of the cache.
 	AccountKey(env Env, cred credential.Credential) string
 	// FetchAccount reads the account behind a key (balance, usage) in the
 	// key's egress turn. A complete answer is cached for a minute. With a
@@ -181,6 +192,83 @@ type TokenCounter interface {
 	// to. They are sent like Messages requests and not written to the
 	// request log.
 	CountTokensEndpoint() string
+}
+
+// ErrorRemapper is implemented by adapters that map some upstream error
+// answers their own way. RemapError becomes the Remap of the service's
+// upstream.Errors (Env.Errors), so it applies to every upstream error the
+// plugin reports: executor answers, error events before a stream's first
+// output, and the adapter's own Env.Errors calls. See upstream.Remap.
+type ErrorRemapper interface {
+	RemapError(status int, code, message string) (mapped int, newMessage string)
+}
+
+// CredentialExtension is implemented by adapters whose auth files carry
+// fields of their own that the management page sets, checks and shows
+// (Wokey's issuer_token). The core keeps them in the auth file it saves;
+// they reach the adapter as credential.Credential.Fields.
+type CredentialExtension interface {
+	// DecodeCredentialInput reads the provider's members of a credential
+	// body (POST and PATCH credentials) once the core has decoded its own.
+	// An error rejects the body like a malformed one: 400 invalid_json with
+	// the error's text.
+	DecodeCredentialInput(body []byte) (input any, err error)
+	// ApplyCredentialInput validates the decoded input and writes it into the
+	// auth file's fields. It runs after base_url and proxy_url are applied
+	// and before prefix, models and priority; a non-nil error rejects the
+	// body with 400.
+	ApplyCredentialInput(fields map[string]any, input any) *InputError
+	// CheckCredential returns the check a credential saved with verification
+	// needs besides VerifyKey, or nil. previous is the credential as it was
+	// before an edit, nil when one is added (then the check runs after
+	// VerifyKey passed).
+	CheckCredential(cred credential.Credential, previous *credential.Credential) *CredentialCheck
+	// CredentialView lists the members the credential's management view
+	// adds (only for auth files that could be read).
+	CredentialView(cred credential.Credential) []ViewMember
+}
+
+// InputError rejects a management request body: {"error":Code,"message":Message}.
+type InputError struct {
+	Code    string
+	Message string
+}
+
+// CredentialCheck is a check of a credential's own fields. The core runs it
+// in a turn of the key's egress; a failure answers the save with
+// {"error":Code,"message":<the error's message>}, 400 when the upstream
+// rejected the check (400, 401 or 403) and 502 otherwise.
+type CredentialCheck struct {
+	Code string
+	// Run checks through client; ctx bounds the whole check
+	// (AccountCallTimeout, the wait for the turn included).
+	Run func(ctx context.Context, env Env, client *http.Client) *pluginabi.Error
+}
+
+// ViewMember is one member a provider adds to a JSON view. It goes before
+// the member named Before, which must be one the view always has; empty
+// Before puts it last.
+type ViewMember struct {
+	Name   string
+	Value  any
+	Before string
+}
+
+// AccountViewer is implemented by adapters whose management page shows more
+// about an account than CPA's quota panel needs (Wokey adds the issuing
+// balance of keys with an issuer token). The page's quota route then calls
+// FetchAccountView instead of FetchAccount, the same way: in the key's egress
+// turn, and cached under AccountKey plus " view" when complete.
+type AccountViewer interface {
+	FetchAccountView(env Env, client *http.Client, cred credential.Credential) (info any, complete bool, perr *pluginabi.Error)
+}
+
+// QuotaChecker is implemented by adapters that cannot draw CPA's quota panel
+// from every account answer (Wokey needs both the balance and the key
+// usage). quota.fetch answers with QuotaError's error, when not nil, instead
+// of Quota.
+type QuotaChecker interface {
+	QuotaError(info any) *pluginabi.Error
 }
 
 // CatalogSource is a provider's model catalog: the cached snapshot and how to

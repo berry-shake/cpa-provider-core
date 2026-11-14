@@ -1,7 +1,11 @@
 package requestlog
 
 import (
+	"bufio"
+	"bytes"
 	"database/sql"
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -17,6 +21,14 @@ import (
 const (
 	// agePruneEvery is how many inserts pass between age-based prunes.
 	agePruneEvery = 100
+
+	// The request logs of early Wokey builds. Opening a data dir moves them
+	// into the database: requests.db (the name used by early 0.1.7 builds) is
+	// renamed when the database does not exist yet, and requests.jsonl (the
+	// log before SQLite) is imported once and removed. Without them, as in
+	// every other plugin's data dir, nothing happens.
+	legacyRequestDB  = "requests.db"
+	legacyRequestLog = "requests.jsonl"
 )
 
 const requestSchema = `
@@ -154,6 +166,7 @@ func (l *Log) openLocked() {
 			l.failLocked("open request log: " + errDir.Error())
 			return
 		}
+		l.renameLegacyDBLocked()
 		dsn = "file:" + filepath.ToSlash(filepath.Join(l.dir, l.file))
 	}
 	db, errOpen := sql.Open("sqlite3", dsn+"?_busy_timeout=5000&_journal_mode=WAL&_synchronous=NORMAL")
@@ -177,6 +190,27 @@ func (l *Log) openLocked() {
 		return
 	}
 	l.db = db
+	l.importLegacyLocked()
+}
+
+// renameLegacyDBLocked moves a database saved under the old name to the
+// current one. The WAL files go first, so a move cut short is finished on the
+// next open instead of leaving committed rows behind in an orphaned WAL.
+func (l *Log) renameLegacyDBLocked() {
+	current := filepath.Join(l.dir, l.file)
+	legacy := filepath.Join(l.dir, legacyRequestDB)
+	if _, errStat := os.Stat(current); !errors.Is(errStat, os.ErrNotExist) {
+		return
+	}
+	if _, errStat := os.Stat(legacy); errStat != nil {
+		return
+	}
+	for _, suffix := range []string{"-wal", "-shm", ""} {
+		if errRename := os.Rename(legacy+suffix, current+suffix); errRename != nil && !errors.Is(errRename, os.ErrNotExist) {
+			l.warnf("rename old request log: " + errRename.Error())
+			return
+		}
+	}
 }
 
 // migrateRequestSchema adds the columns an older database lacks.
@@ -214,6 +248,49 @@ func migrateRequestSchema(db *sql.DB) error {
 func (l *Log) failLocked(message string) {
 	l.openErr = message
 	l.warnf(message)
+}
+
+// importLegacyLocked moves entries from the old JSONL log into the database
+// and removes the file once they are committed.
+func (l *Log) importLegacyLocked() {
+	if l.dir == "" {
+		return
+	}
+	path := filepath.Join(l.dir, legacyRequestLog)
+	raw, errRead := os.ReadFile(path)
+	if errRead != nil {
+		if !errors.Is(errRead, os.ErrNotExist) {
+			l.warnf("import request log: " + errRead.Error())
+		}
+		return
+	}
+	tx, errTx := l.db.Begin()
+	if errTx != nil {
+		l.warnf("import request log: " + errTx.Error())
+		return
+	}
+	scanner := bufio.NewScanner(bytes.NewReader(raw))
+	scanner.Buffer(make([]byte, 64<<10), 4<<20)
+	for scanner.Scan() {
+		var entry Entry
+		if json.Unmarshal(scanner.Bytes(), &entry) != nil {
+			continue // torn tail or a bad line
+		}
+		if _, errInsert := tx.Exec(insertRequest, insertArgs(entry)...); errInsert != nil {
+			_ = tx.Rollback()
+			l.warnf("import request log: " + errInsert.Error())
+			return
+		}
+	}
+	if errCommit := tx.Commit(); errCommit != nil {
+		l.warnf("import request log: " + errCommit.Error())
+		return
+	}
+	for _, name := range []string{path, path + ".tmp"} {
+		if errRemove := os.Remove(name); errRemove != nil && !errors.Is(errRemove, os.ErrNotExist) {
+			l.warnf("remove old request log: " + errRemove.Error())
+		}
+	}
 }
 
 func insertArgs(e Entry) []any {

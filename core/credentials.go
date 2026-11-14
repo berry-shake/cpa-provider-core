@@ -10,6 +10,7 @@ import (
 	"github.com/berry-shake/cpa-provider-core/config"
 	"github.com/berry-shake/cpa-provider-core/credential"
 	"github.com/berry-shake/cpa-provider-core/egress"
+	"github.com/berry-shake/cpa-provider-core/provider"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 )
@@ -32,6 +33,9 @@ type credentialInput struct {
 	Prefix   json.RawMessage `json:"prefix"`
 	Models   json.RawMessage `json:"models"`
 	Priority json.RawMessage `json:"priority"`
+	// extension is what the adapter's provider.CredentialExtension decoded
+	// from the same body.
+	extension any
 }
 
 type credentialResult struct {
@@ -40,7 +44,7 @@ type credentialResult struct {
 	UnknownModels []string        `json:"unknown_models,omitempty"`
 }
 
-func decodeCredentialInput(body []byte) (credentialInput, *errorBody) {
+func (s *Service) decodeCredentialInput(body []byte) (credentialInput, *errorBody) {
 	var input credentialInput
 	if len(bytes.TrimSpace(body)) == 0 {
 		return input, &errorBody{Error: "invalid_json", Message: "request body is required"}
@@ -48,12 +52,20 @@ func decodeCredentialInput(body []byte) (credentialInput, *errorBody) {
 	if errUnmarshal := json.Unmarshal(body, &input); errUnmarshal != nil {
 		return input, &errorBody{Error: "invalid_json", Message: errUnmarshal.Error()}
 	}
+	if s.credExt != nil {
+		extension, errDecode := s.credExt.DecodeCredentialInput(body)
+		if errDecode != nil {
+			return input, &errorBody{Error: "invalid_json", Message: errDecode.Error()}
+		}
+		input.extension = extension
+	}
 	return input, nil
 }
 
 // applyCredentialInput validates input and writes it into an auth file's
-// fields; cfg normalises base URLs.
-func applyCredentialInput(fields map[string]any, input credentialInput, cfg config.Config) *errorBody {
+// fields; cfg normalises base URLs and ext, when not nil, applies the
+// provider's own members.
+func applyCredentialInput(fields map[string]any, input credentialInput, cfg config.Config, ext provider.CredentialExtension) *errorBody {
 	if input.Label != nil {
 		setOrDelete(fields, credential.KeyLabel, strings.TrimSpace(*input.Label))
 	}
@@ -77,6 +89,11 @@ func applyCredentialInput(fields map[string]any, input credentialInput, cfg conf
 			return &errorBody{Error: "invalid_proxy", Message: "proxy_url: " + errProxy.Error()}
 		}
 		setOrDelete(fields, credential.KeyProxyURL, proxy)
+	}
+	if ext != nil {
+		if errExt := ext.ApplyCredentialInput(fields, input.extension); errExt != nil {
+			return &errorBody{Error: errExt.Code, Message: errExt.Message}
+		}
 	}
 	if len(input.Prefix) > 0 {
 		if isJSONNull(input.Prefix) {
@@ -143,7 +160,7 @@ func isJSONNull(raw json.RawMessage) bool {
 // addCredential validates a new API key with the adapter (Adapter.VerifyKey)
 // and saves it as an auth file named after the key's fingerprint.
 func (s *Service) addCredential(body []byte) pluginapi.ManagementResponse {
-	input, errInput := decodeCredentialInput(body)
+	input, errInput := s.decodeCredentialInput(body)
 	if errInput != nil {
 		return jsonResponse(http.StatusBadRequest, *errInput)
 	}
@@ -166,13 +183,20 @@ func (s *Service) addCredential(body []byte) pluginapi.ManagementResponse {
 	}
 
 	fields := map[string]any{credential.KeyType: s.spec.ID, credential.KeyAPIKey: key}
-	if errApply := applyCredentialInput(fields, input, s.config()); errApply != nil {
+	if errApply := applyCredentialInput(fields, input, s.config(), s.credExt); errApply != nil {
 		return jsonResponse(http.StatusBadRequest, *errApply)
 	}
 	cred := credential.FromMap(fields)
 	if !input.SkipVerify {
 		if perr := s.verifyKey(cred); perr != nil {
 			return jsonResponse(verifyStatus(perr), errorBody{Error: "key_verification_failed", Message: perr.Message})
+		}
+		if s.credExt != nil {
+			if check := s.credExt.CheckCredential(cred, nil); check != nil {
+				if resp, failed := s.checkCredential(cred, check); failed {
+					return resp
+				}
+			}
 		}
 	}
 	// Load the catalog before saving so the file records the revision its
@@ -195,7 +219,7 @@ func (s *Service) addCredential(body []byte) pluginapi.ManagementResponse {
 // priority of an existing auth file. The API key itself is immutable;
 // add a new credential instead.
 func (s *Service) updateCredential(body []byte) pluginapi.ManagementResponse {
-	input, errInput := decodeCredentialInput(body)
+	input, errInput := s.decodeCredentialInput(body)
 	if errInput != nil {
 		return jsonResponse(http.StatusBadRequest, *errInput)
 	}
@@ -221,8 +245,16 @@ func (s *Service) updateCredential(body []byte) pluginapi.ManagementResponse {
 		return jsonResponse(http.StatusConflict, errorBody{Error: "not_file_backed", Message: "this credential has no auth file the plugin can edit"})
 	}
 	fields := cloneFields(entry.fields)
-	if errApply := applyCredentialInput(fields, input, s.config()); errApply != nil {
+	if errApply := applyCredentialInput(fields, input, s.config(), s.credExt); errApply != nil {
 		return jsonResponse(http.StatusBadRequest, *errApply)
+	}
+	if s.credExt != nil && !input.SkipVerify {
+		updated, previous := credential.FromMap(fields), entry.cred
+		if check := s.credExt.CheckCredential(updated, &previous); check != nil {
+			if resp, failed := s.checkCredential(updated, check); failed {
+				return resp
+			}
+		}
 	}
 	snapshot := s.catalog.Current()
 	if revision := snapshot.Summary().Revision; revision != "" {
@@ -271,7 +303,7 @@ func (s *Service) credentialViewByName(name string) *credentialView {
 		return nil
 	}
 	proxies, _ := s.proxies.List()
-	view := credentialViewOf(entry, s.config(), s.catalog.Current(), s.registeredModels(), proxies)
+	view := s.credentialViewOf(entry, s.config(), s.catalog.Current(), s.registeredModels(), proxies)
 	return &view
 }
 
@@ -280,7 +312,7 @@ func (s *Service) credentialQuota(authIndex string) pluginapi.ManagementResponse
 	if !ok {
 		return jsonResponse(http.StatusNotFound, errorBody{Error: "credential_not_found", Message: "no " + s.spec.DisplayName + " credential matches auth_index"})
 	}
-	info, perr := s.fetchAccount(cred)
+	info, perr := s.fetchAccount(cred, true)
 	if perr != nil {
 		// Upstream 401/403 describe the provider key, not the management key;
 		// keep them out of the page's "management key rejected" handling.

@@ -37,8 +37,9 @@ func executorFormats() []string {
 }
 
 // forwardedRequestHeaders are the client headers that change upstream
-// behavior and are safe to pass on. Client credentials are never forwarded:
-// the key goes out only as a bearer token, so x-api-key is not sent either.
+// behavior and are safe to pass on; adapters add theirs with
+// Spec.ForwardHeaders. Client credentials are never forwarded: the key goes
+// out only as a bearer token, so x-api-key is not sent either.
 var forwardedRequestHeaders = []string{"Anthropic-Beta", "Anthropic-Version"}
 
 // forwardedResponseHeaders are the upstream headers returned to CPA.
@@ -129,7 +130,7 @@ func (s *Service) prepareCall(req pluginapi.ExecutorRequest, to target) (*upstre
 	} else {
 		header.Set("Accept", "application/json")
 	}
-	for _, name := range forwardedRequestHeaders {
+	for _, name := range s.forwardHeaders {
 		if value := strings.TrimSpace(req.Headers.Get(name)); value != "" {
 			header.Set(name, value)
 		}

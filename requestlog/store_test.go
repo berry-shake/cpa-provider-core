@@ -93,6 +93,80 @@ func TestRequestLogRangeAndAge(t *testing.T) {
 	}
 }
 
+// Wokey's JSONL log from before SQLite is imported once and removed.
+func TestRequestLogImportsJSONL(t *testing.T) {
+	dir := t.TempDir()
+	legacy := `{"id":"41","time":"2026-03-01T10:00:00Z","endpoint":"/v1/messages","model":"wokey/a","stream":true,"status":"success","ttft_ms":90,"input_tokens":5}
+{"id":"42","time":"2026-03-01T11:00:00Z","endpoint":"/v1/chat/completions","model":"wokey/b","stream":false,"status":"error","error":"boom"}
+{"id":"43","time":"2026-03-01T1`
+	if errWrite := os.WriteFile(filepath.Join(dir, legacyRequestLog), []byte(legacy), 0o600); errWrite != nil {
+		t.Fatal(errWrite)
+	}
+	log := New(testDB, "test: ", nil)
+	defer log.Close()
+	log.Configure(dir, 100, 0)
+	page := log.Query(Query{})
+	if page.Total != 2 || page.Items[0].Model != "wokey/b" || page.Items[1].TTFTMS == nil || !page.Items[1].Stream {
+		t.Fatalf("imported = %+v", page)
+	}
+	if want := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC); !page.Items[1].Time.Equal(want) {
+		t.Fatalf("time = %v", page.Items[1].Time)
+	}
+	if _, errStat := os.Stat(filepath.Join(dir, legacyRequestLog)); !os.IsNotExist(errStat) {
+		t.Fatal("legacy log not removed")
+	}
+}
+
+// Wokey's database from early 0.1.7 (requests.db) takes the configured
+// name when that does not exist yet.
+func TestRequestLogRenamesOldDatabase(t *testing.T) {
+	src, dir := t.TempDir(), t.TempDir()
+	old := New(testDB, "test: ", nil)
+	defer old.Close()
+	old.Configure(src, 100, 0)
+	for i := 0; i < 3; i++ {
+		old.Add(Entry{Model: "m", Status: "success"})
+	}
+	// Copy the files while the database is still open, so the rows are only
+	// in the WAL, as after a container stop that skipped the checkpoint.
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		raw, errRead := os.ReadFile(filepath.Join(src, testDB+suffix))
+		if errRead != nil {
+			t.Fatal(errRead)
+		}
+		if errWrite := os.WriteFile(filepath.Join(dir, legacyRequestDB+suffix), raw, 0o600); errWrite != nil {
+			t.Fatal(errWrite)
+		}
+	}
+
+	log := New(testDB, "test: ", nil)
+	defer log.Close()
+	log.Configure(dir, 100, 0)
+	if page := log.Query(Query{}); page.Total != 3 || page.Items[0].ID != "3" || page.Error != "" {
+		t.Fatalf("renamed = %+v", page)
+	}
+	if _, errStat := os.Stat(filepath.Join(dir, legacyRequestDB)); !os.IsNotExist(errStat) {
+		t.Fatal("old database left behind")
+	}
+}
+
+// Without the legacy files, opening a data dir creates only the database.
+func TestRequestLogWithoutLegacyFiles(t *testing.T) {
+	dir := t.TempDir()
+	log := New(testDB, "test: ", func(message string) { t.Errorf("warning: %s", message) })
+	defer log.Close()
+	log.Configure(dir, 100, 0)
+	log.Add(Entry{Model: "m", Status: "success"})
+	for _, name := range []string{legacyRequestDB, legacyRequestLog} {
+		if _, errStat := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(errStat) {
+			t.Fatalf("%s created", name)
+		}
+	}
+	if page := log.Query(Query{}); page.Total != 1 {
+		t.Fatalf("page = %+v", page)
+	}
+}
+
 func TestRequestLogUpgradesOldTable(t *testing.T) {
 	dir := t.TempDir()
 	// A database written by early 0.1.7, before request_id and the 0.1.9
