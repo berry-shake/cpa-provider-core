@@ -46,7 +46,7 @@ var forwardedRequestHeaders = []string{"Anthropic-Beta", "Anthropic-Version"}
 var forwardedResponseHeaders = []string{"Content-Type", "X-Request-Id", "Request-Id", "Retry-After"}
 
 // coreRequestMembers are the top-level request members prepareCall reads or
-// edits; adapters add theirs with Spec.RequestMembers.
+// edits; adapters add theirs with provider.RequestReader.
 var coreRequestMembers = []string{"model", "stream_options", "reasoning_effort", "reasoning", "output_config", "thinking"}
 
 // target is where a call goes: the protocol it speaks and the endpoint path.
@@ -99,6 +99,7 @@ func (s *Service) prepareCall(req pluginapi.ExecutorRequest, to target) (*upstre
 	}
 	cfg := s.config()
 	members, errScan := payload.Members(req.Payload, s.requestMembers...)
+	coreErr := coreScanError(members, errScan)
 	model := strings.TrimSpace(req.Model)
 	if model == "" {
 		model = payload.String(req.Payload, members, "model")
@@ -108,16 +109,16 @@ func (s *Service) prepareCall(req pluginapi.ExecutorRequest, to target) (*upstre
 	}
 	upstreamModel := s.catalog.Current().UpstreamID(model, cred.EffectivePrefix(cfg))
 	encodedUpstream, _ := json.Marshal(upstreamModel)
-	body, errBody := payload.Set(req.Payload, members, errScan, "model", encodedUpstream)
+	body, errBody := payload.Set(req.Payload, members, coreErr, "model", encodedUpstream)
 	if errBody != nil {
 		return nil, upstream.RequestError("invalid_request", s.errors.Prefix+errBody.Error())
 	}
-	if _, present := members["stream_options"]; to.protocol == provider.Chat && req.Stream && !present && errScan == nil {
+	if _, present := members["stream_options"]; to.protocol == provider.Chat && req.Stream && !present && coreErr == nil {
 		// Ask for the final usage chunk so CPA can account the request.
 		body = payload.Insert(body, "stream_options", []byte(`{"include_usage":true}`))
 	}
 	effort := ""
-	if errScan == nil {
+	if coreErr == nil {
 		effort = reasoningEffort(req.Payload, members)
 	}
 	setting, errProxy := egress.ResolveEgress(cred.ProxyURL, s.globalProxy())
@@ -169,6 +170,22 @@ func (s *Service) prepareCall(req pluginapi.ExecutorRequest, to target) (*upstre
 		egress:        setting.Label(),
 		fix:           fix,
 	}, nil
+}
+
+// coreScanError is the scan error as a scan for only the core's members
+// would have reported it. That scan stops once they are all found, so a
+// malformed body met later, while looking for an adapter's members
+// (provider.RequestReader), does not count.
+func coreScanError(found map[string]payload.Span, errScan error) error {
+	if errScan == nil {
+		return nil
+	}
+	for _, key := range coreRequestMembers {
+		if _, ok := found[key]; !ok {
+			return errScan
+		}
+	}
+	return nil
 }
 
 func (c *upstreamCall) newRequest(ctx context.Context) (*http.Request, error) {

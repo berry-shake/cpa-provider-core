@@ -2,12 +2,15 @@ package core
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/berry-shake/cpa-provider-core/credential"
+	"github.com/berry-shake/cpa-provider-core/payload"
+	"github.com/berry-shake/cpa-provider-core/provider"
 	"github.com/berry-shake/cpa-provider-core/requestlog"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
@@ -386,5 +389,47 @@ func TestRequestInterceptorStampsWokeyRequests(t *testing.T) {
 	}
 	if envelope := decodeEnvelope(t, svc.Call(pluginabi.MethodRequestInterceptAfter, []byte(`{bad`))); envelope.OK || envelope.Error.Code != "invalid_request" {
 		t.Fatalf("bad request: %+v", envelope)
+	}
+}
+
+// readerAdapter reads conversation members past the core's, the way OpenCode
+// derives its session, and keeps what Decorate was handed.
+type readerAdapter struct {
+	*testAdapter
+	seen *provider.CallInput
+}
+
+func (a *readerAdapter) RequestMembers() []string { return []string{"messages"} }
+
+func (a *readerAdapter) Decorate(_ http.Header, in provider.CallInput) { a.seen = &in }
+
+// An adapter's request members do not change what the core decides: once
+// the core's members are all found, a malformed body the longer scan runs
+// into still leaves the reasoning effort logged, while the adapter is told
+// about it.
+func TestRequestReaderLeavesCoreDecisions(t *testing.T) {
+	body := `{"model":"wokey/model-a","stream_options":{"include_usage":true},"reasoning_effort":"high","reasoning":{},"output_config":{},"thinking":{},"messages":[}`
+	reader := &readerAdapter{testAdapter: newTestAdapter()}
+	for _, adapter := range []provider.Adapter{newTestAdapter(), reader} {
+		svc := New(adapter, "test", nil)
+		call, perr := svc.prepareCall(executorRequest("openai", "wokey/model-a", body), target{protocol: provider.Chat, endpoint: endpointChat})
+		svc.Close()
+		if perr != nil {
+			t.Fatalf("%T: %+v", adapter, perr)
+		}
+		if call.effort != "high" {
+			t.Errorf("%T: effort = %q, want high", adapter, call.effort)
+		}
+	}
+	if reader.seen == nil || reader.seen.ScanErr == nil {
+		t.Fatalf("Decorate got %+v, want the scan error", reader.seen)
+	}
+	if _, found := reader.seen.Members["messages"]; found {
+		t.Fatal("malformed messages member reported as found")
+	}
+
+	// A core member missing before the malformed part still counts.
+	if err := coreScanError(map[string]payload.Span{"model": {}}, errors.New("bad")); err == nil {
+		t.Fatal("coreScanError dropped the error of an incomplete core scan")
 	}
 }

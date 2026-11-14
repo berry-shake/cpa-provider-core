@@ -79,7 +79,8 @@ type Service struct {
 	errors upstream.Errors
 	paths  paths
 	// requestMembers are the top-level request members prepareCall reads or
-	// edits; the rest of the body is passed through without being decoded.
+	// edits and those the adapter reads (provider.RequestReader); the rest
+	// of the body is passed through without being decoded.
 	requestMembers []string
 	// forwardHeaders are the client headers prepareCall passes on.
 	forwardHeaders []string
@@ -144,7 +145,7 @@ func NewWithOptions(adapter provider.Adapter, version string, host HostCaller, o
 		catalog:         adapter.Catalog(),
 		errors:          upstream.Errors{Prefix: spec.ID + ": "},
 		paths:           pathsFor(spec.ID),
-		requestMembers:  append(append([]string(nil), coreRequestMembers...), spec.RequestMembers...),
+		requestMembers:  append([]string(nil), coreRequestMembers...),
 		forwardHeaders:  append(append([]string(nil), forwardedRequestHeaders...), spec.ForwardHeaders...),
 		requestIDHeader: "X-" + spec.DisplayName + "-Cpa-Request-Id",
 
@@ -160,6 +161,9 @@ func NewWithOptions(adapter provider.Adapter, version string, host HostCaller, o
 
 		proxies:         proxystore.New(),
 		egressCheckURLs: defaultEgressCheckURLs,
+	}
+	if reader, ok := adapter.(provider.RequestReader); ok {
+		svc.requestMembers = append(svc.requestMembers, reader.RequestMembers()...)
 	}
 	svc.decorator, _ = adapter.(provider.HeaderDecorator)
 	svc.counter, _ = adapter.(provider.TokenCounter)

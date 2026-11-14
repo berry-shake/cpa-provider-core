@@ -72,11 +72,6 @@ type Spec struct {
 	Logo func() []byte
 	// Texts are the provider-specific texts.
 	Texts Texts
-	// RequestMembers are top-level request members Decorate reads besides
-	// the ones the core reads (model, stream_options and the reasoning
-	// settings). They change where the request scan stops, so they are
-	// only listed by providers that need them.
-	RequestMembers []string
 	// ForwardHeaders are client request headers passed on to the upstream
 	// besides Anthropic-Beta and Anthropic-Version (Wokey's X-End-User-Id).
 	// Client credentials must never be listed.
@@ -154,10 +149,23 @@ type CallInput struct {
 	// Request is the executor request as CPA sent it.
 	Request pluginapi.ExecutorRequest
 	// Members are the top-level request members found by the scan (the
-	// core's and Spec.RequestMembers); ScanErr reports a malformed body met
+	// core's and RequestReader's); ScanErr reports a malformed body met
 	// before the scan stopped.
 	Members map[string]payload.Span
 	ScanErr error
+}
+
+// RequestReader is implemented by adapters whose Decorate or StreamFix read
+// top-level request members besides the core's (model, stream_options and
+// the reasoning settings): OpenCode derives its session from the start of
+// the conversation, OpenDesign's stream fix reads max_tokens. The core finds
+// them in the same scan as its own members (CallInput.Members). What the
+// core decides from the request itself (adding stream_options, the
+// reasoning effort it logs) does not depend on them: a malformed body the
+// longer scan runs into after the core's members were all found does not
+// count for those decisions.
+type RequestReader interface {
+	RequestMembers() []string
 }
 
 // HeaderDecorator is implemented by adapters that add their own headers to
