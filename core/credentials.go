@@ -253,7 +253,10 @@ func (s *Service) updateCredential(body []byte) pluginapi.ManagementResponse {
 			}
 		}
 	}
-	snapshot := s.catalog.Current()
+	// As when adding: load the catalog before saving so the file records
+	// the revision its models are registered from and the background sync
+	// does not save it again.
+	snapshot := s.catalogFor(credential.FromMap(fields))
 	if revision := revisionFor(snapshot, credential.FromMap(fields)); revision != "" {
 		fields[credential.KeyModelRevision] = revision
 	}
