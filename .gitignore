@@ -1,0 +1,13 @@
+# Local build artifacts
+*.dll
+*.so
+*.dylib
+*.h
+
+# Web tooling
+node_modules/
+web/dist/
+
+# OS clutter
+.DS_Store
+Thumbs.db
