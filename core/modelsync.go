@@ -2,6 +2,9 @@ package core
 
 import (
 	"context"
+	"errors"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/berry-shake/cpa-provider-core/credential"
@@ -153,14 +156,25 @@ func (s *Service) refreshCatalog(force bool) (provider.Catalog, error) {
 // refreshKeys reloads the list of every key of a keyed catalog (each
 // through its own egress and base URL), drops the lists of deleted keys and
 // re-registers credentials whose models were built from an older list. It
-// fails only when no list loads.
+// fails only when no list loads, or when the auth files cannot be listed
+// (then every list is kept: there is no telling which keys are gone). The
+// error names every distinct failure.
 func (s *Service) refreshKeys() (provider.Catalog, error) {
-	entries, _ := s.listAuths()
+	entries, errList := s.listAuths()
+	if errList != nil {
+		s.logf("warn", s.errors.Prefix+"model list refresh failed", map[string]any{"error": errList.Error()})
+		return s.catalog.Current(), errList
+	}
 	keep := map[string]bool{}
 	var (
-		loaded  int
-		lastErr error
+		loaded   int
+		failures []string
 	)
+	fail := func(err error) {
+		if message := err.Error(); !slices.Contains(failures, message) {
+			failures = append(failures, message)
+		}
+	}
 	for _, entry := range entries {
 		if entry.readError != "" || entry.cred.APIKey == "" || keep[keyID(entry.cred)] {
 			continue
@@ -168,14 +182,14 @@ func (s *Service) refreshKeys() (provider.Catalog, error) {
 		keep[keyID(entry.cred)] = true
 		setting, errProxy := egress.ResolveEgress(entry.cred.ProxyURL, s.globalProxy())
 		if errProxy != nil {
-			lastErr = errProxy
+			fail(errProxy)
 			continue
 		}
 		ctx, cancel := context.WithTimeout(s.ctx, catalogLoadTimeout)
 		_, errFetch := s.keyed.FetchKey(ctx, s.clients.Client(setting), entry.cred.EffectiveBaseURL(s.config()), entry.cred.APIKey, keyID(entry.cred), s.userAgent(), s.now())
 		cancel()
 		if errFetch != nil {
-			lastErr = errFetch
+			fail(errFetch)
 			continue
 		}
 		loaded++
@@ -184,12 +198,13 @@ func (s *Service) refreshKeys() (provider.Catalog, error) {
 	if keyed, ok := snapshot.(provider.KeyedCatalog); len(entries) > 0 || (ok && keyed.Keys() > 0) {
 		snapshot = s.keyed.Retain(keep)
 	}
-	if loaded == 0 && lastErr != nil {
-		s.logf("warn", s.errors.Prefix+"model list refresh failed", map[string]any{"error": lastErr.Error()})
-		return snapshot, lastErr
-	}
-	if lastErr != nil {
-		s.logf("warn", s.errors.Prefix+"some model lists did not load", map[string]any{"error": lastErr.Error()})
+	if len(failures) > 0 {
+		errRefresh := errors.New(strings.Join(failures, "; "))
+		if loaded == 0 {
+			s.logf("warn", s.errors.Prefix+"model list refresh failed", map[string]any{"error": errRefresh.Error()})
+			return snapshot, errRefresh
+		}
+		s.logf("warn", s.errors.Prefix+"some model lists did not load", map[string]any{"error": errRefresh.Error()})
 	}
 	s.syncRegistrations(snapshot, entries)
 	return snapshot, nil

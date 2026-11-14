@@ -40,6 +40,8 @@ type fakeHost struct {
 	svc *Service
 	// forcePrefix mirrors CPA's routing.force-model-prefix.
 	forcePrefix bool
+	// listFails makes host.auth.list fail.
+	listFails bool
 
 	mu        sync.Mutex
 	files     []*fakeAuthFile
@@ -75,6 +77,9 @@ func (h *fakeHost) call(method string, request []byte) ([]byte, error) {
 	case pluginabi.MethodHostAuthList:
 		h.mu.Lock()
 		defer h.mu.Unlock()
+		if h.listFails {
+			return failResult("auth list unavailable"), nil
+		}
 		files := make([]pluginapi.HostAuthFileEntry, 0, len(h.files))
 		for _, file := range h.files {
 			files = append(files, pluginapi.HostAuthFileEntry{
