@@ -81,26 +81,6 @@ type Spec struct {
 	// besides Anthropic-Beta and Anthropic-Version (Wokey's X-End-User-Id).
 	// Client credentials must never be listed.
 	ForwardHeaders []string
-	// QuotaRPC words the quota RPCs the provider's own way (OpenDesign).
-	// The zero value is the core's wording.
-	QuotaRPC QuotaRPC
-}
-
-// QuotaRPC are a provider's own answers of the quota RPCs. They exist only to
-// keep the first migration byte for byte; see the README's round-2 list.
-type QuotaRPC struct {
-	// DecodeError starts the message of a quota.fetch request that does not
-	// decode; empty is "decode quota request" (OpenDesign: "decode quota
-	// fetch request").
-	DecodeError string
-	// RememberHost makes quota.fetch cache the host summary like the auth
-	// and model RPCs do. CPA sends quota.fetch without one, so this wipes the
-	// cached global proxy and force-model-prefix (OpenDesign's behaviour,
-	// kept as is).
-	RememberHost bool
-	// Reset, when set, answers quota.reset with this response instead of a
-	// 501 unsupported_operation error.
-	Reset *pluginapi.QuotaResetResponse
 }
 
 // Texts are the texts each provider words its own way.

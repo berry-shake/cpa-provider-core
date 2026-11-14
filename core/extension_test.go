@@ -11,21 +11,10 @@ import (
 )
 
 // extAdapter is the test adapter with the hooks OpenDesign uses that need
-// no upstream: HostUser, ManagementExtension, QuotaFetcher, QuotaPage and
-// Spec.QuotaRPC.
+// no upstream: HostUser, ManagementExtension, QuotaFetcher and QuotaPage.
 type extAdapter struct {
 	*testAdapter
 	host provider.Host
-}
-
-func (a *extAdapter) Spec() provider.Spec {
-	spec := a.testAdapter.Spec()
-	spec.QuotaRPC = provider.QuotaRPC{
-		DecodeError:  "decode test quota",
-		RememberHost: true,
-		Reset:        &pluginapi.QuotaResetResponse{Message: "no reset"},
-	}
-	return spec
 }
 
 func (a *extAdapter) Attach(host provider.Host) { a.host = host }
@@ -90,21 +79,22 @@ func TestManagementExtension(t *testing.T) {
 	}
 }
 
-// QuotaRPC replaces the decode error text and the quota.reset answer and
-// makes quota.fetch remember the host summary; a QuotaFetcher answers
-// quota.fetch, and the Host lists only the provider's own auth files.
+// A QuotaFetcher answers quota.fetch, which leaves the cached host summary
+// alone; quota.reset is refused the same way for every provider, and the
+// Host lists only the provider's own auth files.
 func TestQuotaRPCAndHost(t *testing.T) {
 	svc, adapter, host := newExtService(t)
 	host.seed("mine.json", testProviderID, map[string]any{"type": testProviderID, "api_key": testGoodKey})
 	host.seed("other.json", "codex", map[string]any{"type": "codex"})
 
 	env := decodeEnvelope(t, svc.Call(pluginabi.MethodQuotaFetch, []byte("not json")))
-	if env.OK || env.Error == nil || !strings.HasPrefix(env.Error.Message, "decode test quota: ") {
+	if env.OK || env.Error == nil || !strings.HasPrefix(env.Error.Message, "decode quota request: ") {
 		t.Fatalf("decode error = %+v", env.Error)
 	}
 
+	svc.rememberHost(pluginapi.HostConfigSummary{ProxyURL: "http://proxy.invalid:3128"})
 	env = decodeEnvelope(t, svc.Call(pluginabi.MethodQuotaFetch, mustJSON(t, map[string]any{
-		"auth_index": "idx-1", "provider": testProviderID, "host": map[string]any{"ProxyURL": "http://proxy.invalid:3128"},
+		"auth_index": "idx-1", "provider": testProviderID,
 	})))
 	if !env.OK {
 		t.Fatalf("fetch = %+v", env.Error)
@@ -114,11 +104,11 @@ func TestQuotaRPCAndHost(t *testing.T) {
 		t.Fatalf("quota = %s", env.Result)
 	}
 	if proxy := svc.globalProxy(); proxy != "http://proxy.invalid:3128" {
-		t.Fatalf("global proxy = %q, want the one quota.fetch carried", proxy)
+		t.Fatalf("global proxy = %q, quota.fetch without a host summary must keep it", proxy)
 	}
 
 	env = decodeEnvelope(t, svc.Call(pluginabi.MethodQuotaReset, []byte(`{}`)))
-	if reset := mustDecode[pluginapi.QuotaResetResponse](t, env.Result); !env.OK || reset.Success || reset.Message != "no reset" {
+	if reset := mustDecode[pluginapi.QuotaResetResponse](t, env.Result); !env.OK || reset.Success || reset.Message != "wokey: quota reset is not supported" {
 		t.Fatalf("reset = %s %+v", env.Result, env.Error)
 	}
 

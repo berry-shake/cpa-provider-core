@@ -328,10 +328,11 @@ func TestCallDispatchRPCs(t *testing.T) {
 	if envelope = call(pluginabi.MethodQuotaDescribe, struct{}{}); !envelope.OK {
 		t.Fatalf("quota.describe: %+v", envelope)
 	}
-	for _, method := range []string{pluginabi.MethodQuotaReset, pluginabi.MethodExecutorHTTPRequest} {
-		if envelope = call(method, struct{}{}); envelope.OK || envelope.Error.HTTPStatus != http.StatusNotImplemented {
-			t.Errorf("%s: %+v", method, envelope)
-		}
+	if envelope = call(pluginabi.MethodQuotaReset, struct{}{}); !envelope.OK || mustDecode[pluginapi.QuotaResetResponse](t, envelope.Result).Success {
+		t.Errorf("quota.reset: %+v", envelope)
+	}
+	if envelope = call(pluginabi.MethodExecutorHTTPRequest, struct{}{}); envelope.OK || envelope.Error.HTTPStatus != http.StatusNotImplemented {
+		t.Errorf("executor.http_request: %+v", envelope)
 	}
 	if envelope = call(pluginabi.MethodModelStatic, struct{}{}); !envelope.OK || len(mustDecode[pluginapi.ModelResponse](t, envelope.Result).Models) != 0 {
 		t.Fatalf("model.static: %+v", envelope)

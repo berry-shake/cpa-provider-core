@@ -114,9 +114,9 @@ func (s *Service) checkCredential(cred credential.Credential, check *provider.Cr
 }
 
 // quotaFetch answers quota.fetch; an adapter that is a provider.QuotaFetcher
-// answers on its own. Call does not call rememberHost first (unless
-// Spec.QuotaRPC.RememberHost): CPA sends quota requests without the host
-// summary, and an empty one would wipe the cached global proxy.
+// answers on its own. Call does not call rememberHost first: a host that
+// sends the quota request without its summary would wipe the cached global
+// proxy.
 func (s *Service) quotaFetch(req pluginapi.QuotaFetchRequest) []byte {
 	if s.quotaFetcher != nil {
 		resp, perr := s.quotaFetcher.FetchQuota(req)

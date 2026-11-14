@@ -347,21 +347,13 @@ func (s *Service) Call(method string, request []byte) []byte {
 	case pluginabi.MethodQuotaFetch:
 		var req rpcQuotaFetchRequest
 		if errUnmarshal := json.Unmarshal(request, &req); errUnmarshal != nil {
-			decodeError := s.spec.QuotaRPC.DecodeError
-			if decodeError == "" {
-				decodeError = "decode quota request"
-			}
-			return ErrorEnvelope("invalid_request", decodeError+": "+errUnmarshal.Error())
-		}
-		if s.spec.QuotaRPC.RememberHost {
-			s.rememberHost(req.Host)
+			return ErrorEnvelope("invalid_request", "decode quota request: "+errUnmarshal.Error())
 		}
 		return s.quotaFetch(req.QuotaFetchRequest)
 	case pluginabi.MethodQuotaReset:
-		if reset := s.spec.QuotaRPC.Reset; reset != nil {
-			return okEnvelope(*reset)
-		}
-		return errorEnvelopeFrom(&pluginabi.Error{Code: "unsupported_operation", Message: s.errors.Prefix + "quota reset is not supported", HTTPStatus: http.StatusNotImplemented})
+		// The providers' allowances cannot be reset from here. CPA reads
+		// success false as a refused reset and shows the message.
+		return okEnvelope(pluginapi.QuotaResetResponse{Success: false, Message: s.errors.Prefix + "quota reset is not supported"})
 
 	default:
 		return ErrorEnvelope("unknown_method", "unknown method: "+method)
@@ -445,7 +437,7 @@ func (s *Service) env() provider.Env {
 }
 
 // rememberHost caches CPA's global proxy-url and force-model-prefix, which
-// only arrive with auth, model and quota requests.
+// arrive with auth and model requests.
 func (s *Service) rememberHost(host pluginapi.HostConfigSummary) {
 	proxyURL := strings.TrimSpace(host.ProxyURL)
 	s.mu.Lock()
