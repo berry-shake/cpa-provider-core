@@ -195,6 +195,53 @@ func TestExecuteStreamTruncatedAfterOutput(t *testing.T) {
 	}
 }
 
+// An error event after output reaches the client inside the stream, which
+// closes normally; the request log records the call as failed in the stream
+// phase with the 200 the client got.
+func TestExecuteStreamErrorAfterOutputIsLogged(t *testing.T) {
+	upstream := newFakeWokey(t)
+	events := []string{
+		"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"model\":\"model-a\",\"usage\":{\"input_tokens\":5}}}\n\n",
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hel\"}}\n\n",
+		"event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}\n\n",
+	}
+	upstream.handle(endpointMessages, sseHandler(events...))
+	svc, host := newTestService(t, upstream)
+	svc.reqlog.Configure("", 10, 0)
+
+	req := rpcExecutorRequest{ExecutorRequest: executorRequest("claude", "wokey/model-a", `{"model":"wokey/model-a","stream":true}`), StreamID: "l1"}
+	if envelope := decodeEnvelope(t, svc.executeStream(req)); !envelope.OK {
+		t.Fatalf("open: %+v", envelope.Error)
+	}
+	if closeReq := waitClosed(t, host, "l1"); closeReq.ErrorDetail != nil || closeReq.Error != "" {
+		t.Fatalf("close = %+v", closeReq)
+	}
+	svc.streams.Wait()
+	host.mu.Lock()
+	emitted := len(host.emits["l1"])
+	host.mu.Unlock()
+	if emitted != 3 {
+		t.Fatalf("emitted %d events", emitted)
+	}
+
+	// Without a stream bridge the buffered chunks carry the event as well.
+	buffered := decodeEnvelope(t, svc.executeStream(rpcExecutorRequest{ExecutorRequest: req.ExecutorRequest}))
+	if !buffered.OK {
+		t.Fatalf("buffered: %+v", buffered.Error)
+	}
+
+	items := svc.reqlog.Query(requestlog.Query{}).Items
+	if len(items) != 2 {
+		t.Fatalf("logged %d calls", len(items))
+	}
+	for _, e := range items {
+		if e.Status != "error" || e.HTTPStatus != 200 || e.UpstreamStatus != 200 || e.ErrorPhase != "stream" ||
+			e.ErrorCode != "overloaded_error" || e.Error != "wokey: Overloaded" || e.UsageReported == nil || !*e.UsageReported {
+			t.Fatalf("log entry = %+v", e)
+		}
+	}
+}
+
 func TestExecuteStreamWithoutBridgeReportsEarlyError(t *testing.T) {
 	upstream := newFakeWokey(t)
 	upstream.handle(endpointChat, sseHandler(

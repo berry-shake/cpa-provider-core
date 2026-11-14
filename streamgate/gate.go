@@ -60,6 +60,8 @@ type Gate struct {
 	open      bool
 	done      bool
 	failure   *pluginabi.Error
+	// late is the error event that arrived after output had started.
+	late *pluginabi.Error
 	// Tap, when set, sees every event with its classification. The event
 	// is nil for raw chunks of a body that is not SSE.
 	Tap func(Kind, *Event)
@@ -117,7 +119,11 @@ func (g *Gate) push(event []byte) error {
 			g.failure = g.config.Errors.Upstream(streamErrorStatus(detail), g.header, detail)
 			return errStreamRejected
 		}
-		// After output has started the client gets the error event as is.
+		// After output has started the client gets the error event as is;
+		// StreamError still reports it.
+		if g.late == nil {
+			g.late = g.config.Errors.Upstream(streamErrorStatus(detail), g.header, detail)
+		}
 		g.done = true
 	case Terminal:
 		g.done = true
@@ -359,6 +365,14 @@ func nonEmpty(value any) bool {
 	default:
 		return true
 	}
+}
+
+// StreamError is the error event the upstream sent after output had
+// started, mapped like one before it, or nil. The client gets that event
+// inside the stream and Finish reports the stream as complete; the request
+// log records it as a failure.
+func (g *Gate) StreamError() *pluginabi.Error {
+	return g.late
 }
 
 // Phase tells the request log whether output had reached the client.

@@ -173,12 +173,26 @@ func TestGateEarlyError(t *testing.T) {
 	}
 }
 
+// An error after output reaches the client as is and the stream counts as
+// ended, but StreamError reports it for the request log.
 func TestGateErrorAfterOutputPassesThrough(t *testing.T) {
 	delta := "data: {\"type\":\"content_block_delta\",\"delta\":{\"text\":\"Hi\"}}\n\n"
 	failed := "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}\n\n"
 	emitted, gate := runGate(t, provider.Messages, delta, failed)
 	if len(emitted) != 2 || emitted[1] != failed || gate.Finish(context.Background(), nil) != nil {
 		t.Fatalf("emitted %q", emitted)
+	}
+	if late := gate.StreamError(); late == nil || late.Code != "overloaded_error" || late.HTTPStatus != http.StatusServiceUnavailable || late.Message != "test: Overloaded" {
+		t.Fatalf("StreamError = %+v", late)
+	}
+	if gate.Phase() != "stream" {
+		t.Fatalf("phase = %q", gate.Phase())
+	}
+
+	// A complete stream has none.
+	_, gate = runGate(t, provider.Messages, delta, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+	if gate.Finish(context.Background(), nil) != nil || gate.StreamError() != nil {
+		t.Fatalf("complete stream: %+v", gate.StreamError())
 	}
 }
 

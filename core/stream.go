@@ -94,7 +94,7 @@ func (s *Service) executeStream(req rpcExecutorRequest) []byte {
 		if failure := gate.Finish(ctx, streamgate.Pump(resp.Body, sse, gate.Push, func() {})); failure != nil {
 			return fail(failure)
 		}
-		rec.finish(nil, "")
+		rec.finish(lateFailure(gate), gate.Phase())
 		return okEnvelope(rpcExecutorStreamResponse{Headers: headers, Chunks: chunks})
 	}
 
@@ -124,9 +124,26 @@ func (s *Service) executeStream(req rpcExecutorRequest) []byte {
 		}
 		failure := gate.Finish(ctx, errPump)
 		s.closeStream(req.StreamID, failure)
+		if failure == nil {
+			failure = lateFailure(gate)
+		}
 		rec.finish(failure, gate.Phase())
 	}()
 	return okEnvelope(rpcExecutorStreamResponse{Headers: headers})
+}
+
+// lateFailure is how the request log records an error event the upstream
+// sent after output had started (streamgate.Gate.StreamError): a failure in
+// the stream phase whose HTTP status is the 200 the client got, since the
+// client received the event inside the stream. nil when there was none.
+func lateFailure(gate *streamgate.Gate) *pluginabi.Error {
+	late := gate.StreamError()
+	if late == nil {
+		return nil
+	}
+	logged := *late
+	logged.HTTPStatus = http.StatusOK
+	return &logged
 }
 
 // gateConfig describes a call's stream to its gate.
