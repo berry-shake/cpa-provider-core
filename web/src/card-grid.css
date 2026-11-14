@@ -1,0 +1,26 @@
+/* The 2x2 card layout: the facts and the usage figures are both 2x2; a
+   wider card puts the figures beside the facts. Bars (components/keys/parts
+   Bar) name what is left on the right of their head. Providers that use it
+   start their styles.css with @import "@core/card-grid.css". */
+.meters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; gap: 10px 12px; padding-top: 12px; border-top: 1px solid var(--border-subtle); }
+@container (min-width: 340px) {
+  /* Four columns of content (two of facts, then two of figures), each as wide as what it shows,
+     with the spare width shared out evenly between them: the first column is flush left, the
+     last flush right, and the three spaces between are the same. Odd tracks hold content, even
+     tracks are the spaces. The facts and the figures are subgrids of the body, so their columns
+     are these tracks; without subgrid support each keeps its own two even columns. */
+  .cred-body { grid-template-columns: auto minmax(12px, 1fr) auto minmax(12px, 1fr) auto minmax(12px, 1fr) auto; column-gap: 0; }
+  .cred-body > .facts { grid-column: 1 / 4; }
+  .cred-body > .meters, .cred-body > .usage-state { grid-column: 5 / 8; padding: 0 0 0 14px; border-top: none; border-left: 1px solid var(--border-subtle); }
+  .cred-body > .facts, .cred-body > .meters { grid-template-columns: subgrid; column-gap: 0; }
+  .cred-body > .facts > :nth-child(odd), .cred-body > .meters > :nth-child(odd) { grid-column: 1; }
+  .cred-body > .facts > :nth-child(even), .cred-body > .meters > :nth-child(even) { grid-column: 3; }
+  .cred-body > .cap, .cred-body > .usage-note { grid-column: 1 / -1; }
+  .cred-body > .usage-state { align-content: flex-start; }
+}
+.cap-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--text-muted); }
+.cap-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cap-left { flex: none; white-space: nowrap; }
+.cap-left strong { margin-left: 2px; font-size: 15px; font-weight: 650; color: var(--success); font-variant-numeric: tabular-nums; }
+.cap.warn .cap-left strong { color: var(--warning); }
+.cap.bad .cap-left strong { color: var(--danger); }
