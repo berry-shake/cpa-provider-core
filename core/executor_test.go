@@ -161,6 +161,14 @@ func TestExecuteErrors(t *testing.T) {
 	if envelope.OK || envelope.Error.Code != "unsupported_format" {
 		t.Fatalf("format: %+v", envelope.Error)
 	}
+	// Refused formats are logged like the other refusals, without an endpoint.
+	if e := svc.reqlog.Query(requestlog.Query{}).Items[0]; e.Status != "error" || e.ErrorCode != "unsupported_format" || e.Endpoint != "" || e.ErrorPhase != "request" || e.HTTPStatus != 400 {
+		t.Fatalf("format entry = %+v", e)
+	}
+	envelope = decodeEnvelope(t, svc.executeStream(rpcExecutorRequest{ExecutorRequest: executorRequest("gemini", "wokey/model-a", `{}`)}))
+	if e := svc.reqlog.Query(requestlog.Query{}).Items[0]; envelope.OK || e.ErrorCode != "unsupported_format" || !e.Stream {
+		t.Fatalf("stream format entry = %+v / %+v", e, envelope.Error)
+	}
 
 	req := executorRequest("openai", "", `{"messages":[]}`)
 	if envelope = decodeEnvelope(t, svc.execute(req)); envelope.OK || envelope.Error.HTTPStatus != 400 {

@@ -57,7 +57,8 @@ type target struct {
 	countTokens bool
 }
 
-// targetFor resolves the target of an executor format.
+// targetFor resolves the target of an executor format. A format the
+// providers do not serve has no endpoint; its request log entry has none.
 func (s *Service) targetFor(format string) (target, *pluginabi.Error) {
 	protocol, ok := provider.ProtocolForFormat(format)
 	if !ok {
@@ -203,6 +204,7 @@ func (c *upstreamCall) newRequest(ctx context.Context) (*http.Request, error) {
 func (s *Service) execute(req pluginapi.ExecutorRequest) []byte {
 	to, perr := s.targetFor(req.Format)
 	if perr != nil {
+		s.recordFailure(req, "", false, perr)
 		return errorEnvelopeFrom(perr)
 	}
 	return s.executeBuffered(req, to)

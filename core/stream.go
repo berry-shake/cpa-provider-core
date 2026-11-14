@@ -44,6 +44,7 @@ type rpcStreamCloseRequest struct {
 func (s *Service) executeStream(req rpcExecutorRequest) []byte {
 	to, perr := s.targetFor(req.Format)
 	if perr != nil {
+		s.recordFailure(req.ExecutorRequest, "", true, perr)
 		return errorEnvelopeFrom(perr)
 	}
 	req.Stream = true
