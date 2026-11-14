@@ -224,10 +224,7 @@ func classifyStreamEvent(protocol provider.Protocol, ev *Event) (Kind, []byte) {
 		// Unknown data: do not hold it back.
 		return Content, nil
 	}
-	eventType := ev.stringMember("type")
-	if eventType == "" {
-		eventType = ev.Name()
-	}
+	eventType := ev.eventType()
 	if eventType == "error" || (ev.present("error") && eventType != "response.failed") {
 		return Failed, data
 	}
@@ -265,6 +262,29 @@ func classifyStreamEvent(protocol provider.Protocol, ev *Event) (Kind, []byte) {
 		}
 	}
 	return Content, nil
+}
+
+// Output reports whether an event the gate classified as Content carries
+// generated output (text, reasoning or tool call deltas), which is what the
+// request log counts as frames, the same way for every protocol: a chat
+// chunk with a delta, a Messages content_block_delta, a Responses *.delta
+// event. Content that only closes or annotates a part of the response
+// (content_block_stop, a message_delta without a stop reason,
+// response.output_text.done, response.output_item.done, ...) is not output;
+// data that is not a JSON object, and the raw chunks of a body that is not
+// SSE (ev nil), are.
+func Output(protocol provider.Protocol, ev *Event) bool {
+	if ev == nil || !ev.Object() {
+		return true
+	}
+	eventType := ev.eventType()
+	switch protocol {
+	case provider.Messages:
+		return eventType == "" || eventType == "content_block_delta"
+	case provider.Responses:
+		return eventType == "" || strings.HasSuffix(eventType, ".delta")
+	}
+	return true
 }
 
 // classifyChatChunk treats a chunk with a finish reason as terminal and one

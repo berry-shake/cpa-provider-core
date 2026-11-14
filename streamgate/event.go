@@ -105,6 +105,14 @@ func (e *Event) Text(key string) string {
 	return e.stringMember(key)
 }
 
+// eventType is the type member of the data, or else the event name.
+func (e *Event) eventType() string {
+	if eventType := e.stringMember("type"); eventType != "" {
+		return eventType
+	}
+	return e.Name()
+}
+
 // stringMember returns a top-level string member, or "".
 func (e *Event) stringMember(key string) string {
 	value := e.Member(key)

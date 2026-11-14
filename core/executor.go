@@ -68,6 +68,7 @@ func (s *Service) targetFor(format string) (target, *pluginabi.Error) {
 
 // upstreamCall is a fully prepared upstream request.
 type upstreamCall struct {
+	protocol provider.Protocol
 	endpoint string
 	url      string
 	body     []byte
@@ -156,6 +157,7 @@ func (s *Service) prepareCall(req pluginapi.ExecutorRequest, to target) (*upstre
 		fix = s.fixer.StreamFix(to.protocol, provider.CallInput{Request: req, Members: members, ScanErr: errScan})
 	}
 	return &upstreamCall{
+		protocol: to.protocol,
 		endpoint: to.endpoint,
 		url:      cred.EffectiveBaseURL(cfg) + to.endpoint,
 		body:     body,

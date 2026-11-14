@@ -88,6 +88,40 @@ func TestStreamErrorStatusProviderWords(t *testing.T) {
 	}
 }
 
+// Frames count the events that carry output, the same way in every
+// protocol: deltas, not the events that close a part of the response.
+func TestOutput(t *testing.T) {
+	for _, tc := range []struct {
+		protocol provider.Protocol
+		event    string
+		want     bool
+	}{
+		{provider.Messages, `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"a"}}`, true},
+		{provider.Messages, `{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{"}}`, true},
+		{provider.Messages, `{"type":"content_block_stop","index":0}`, false},
+		{provider.Messages, `{"type":"message_delta","usage":{"output_tokens":3}}`, false},
+		{provider.Responses, `{"type":"response.output_text.delta","delta":"a"}`, true},
+		{provider.Responses, `{"type":"response.reasoning_summary_text.delta","delta":"a"}`, true},
+		{provider.Responses, `{"type":"response.function_call_arguments.delta","delta":"{"}`, true},
+		{provider.Responses, `{"type":"response.output_text.done","text":"a"}`, false},
+		{provider.Responses, `{"type":"response.content_part.done"}`, false},
+		{provider.Responses, `{"type":"response.output_item.done"}`, false},
+		{provider.Chat, `{"choices":[{"delta":{"content":"a"}}]}`, true},
+		{provider.Messages, `not json`, true},
+	} {
+		if got := Output(tc.protocol, NewEvent([]byte("data: "+tc.event+"\n\n"))); got != tc.want {
+			t.Errorf("%s %s = %v", tc.protocol, tc.event, got)
+		}
+	}
+	if !Output(provider.Messages, nil) {
+		t.Error("raw chunk is not output")
+	}
+	// The event name stands in for a missing type member.
+	if Output(provider.Messages, NewEvent([]byte("event: content_block_stop\ndata: {\"index\":0}\n\n"))) {
+		t.Error("named content_block_stop counted")
+	}
+}
+
 // testConfig is a gate config with a test error prefix.
 func testConfig(protocol provider.Protocol) Config {
 	return Config{Protocol: protocol, Errors: upstream.Errors{Prefix: "test: "}}

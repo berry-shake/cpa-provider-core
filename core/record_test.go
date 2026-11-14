@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/berry-shake/cpa-provider-core/payload"
+	"github.com/berry-shake/cpa-provider-core/provider"
 	"github.com/berry-shake/cpa-provider-core/requestlog"
 	"github.com/berry-shake/cpa-provider-core/streamgate"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
@@ -30,11 +31,13 @@ func TestParseLogTime(t *testing.T) {
 func TestCallRecordUsage(t *testing.T) {
 	log := requestlog.New("wokey.db", "wokey: ", nil)
 	log.Configure("", 10, 0)
-	rec := &callRecord{log: log, entry: requestlog.Entry{Stream: true, UpstreamStatus: 200}}
+	rec := &callRecord{log: log, entry: requestlog.Entry{Stream: true, UpstreamStatus: 200}, protocol: provider.Messages}
 	event := func(raw string) *streamgate.Event { return streamgate.NewEvent([]byte(raw)) }
 	rec.observe(streamgate.Prelude, event("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"model\":\"claude-x\",\"stop_reason\":null,\"usage\":{\"input_tokens\":3,\"cache_read_input_tokens\":7,\"cache_creation_input_tokens\":2}}}\n\n"))
 	rec.observe(streamgate.Content, event("data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n"))
 	rec.observe(streamgate.Content, nil)
+	// Closing a block is no output frame.
+	rec.observe(streamgate.Content, event("data: {\"type\":\"content_block_stop\",\"index\":0}\n\n"))
 	rec.observe(streamgate.Terminal, event("data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":9}}\n\n"))
 	rec.finish(nil, "")
 	// A buffered call that failed after Wokey answered: no stream fields.

@@ -10,6 +10,7 @@ import (
 
 	"github.com/berry-shake/cpa-provider-core/jsonfield"
 	"github.com/berry-shake/cpa-provider-core/payload"
+	"github.com/berry-shake/cpa-provider-core/provider"
 	"github.com/berry-shake/cpa-provider-core/requestlog"
 	"github.com/berry-shake/cpa-provider-core/streamgate"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
@@ -25,8 +26,10 @@ type callRecord struct {
 	start time.Time
 	entry requestlog.Entry
 	usage usageTotals
+	// protocol is the protocol of the call's stream.
+	protocol provider.Protocol
 	// first and last are when the first and the latest output event
-	// arrived; frames counts output events.
+	// arrived; frames counts output events (streamgate.Output).
 	first, last time.Time
 	frames      int64
 }
@@ -56,7 +59,7 @@ func (s *Service) startRecord(req pluginapi.ExecutorRequest, call *upstreamCall,
 	entry.ReasoningEffort = call.effort
 	entry.Credential = call.keyMasked
 	entry.Egress = call.egress
-	return &callRecord{log: s.reqlog, start: now, entry: entry}
+	return &callRecord{log: s.reqlog, start: now, entry: entry, protocol: call.protocol}
 }
 
 // recordFailure logs a call that failed before prepareCall produced a call.
@@ -82,7 +85,7 @@ var observedMembers = []string{"model", "message", "response", "usage", "stop_re
 // observe looks at a stream event that went through the gate; ev is nil for
 // raw chunks of a body that is not SSE.
 func (r *callRecord) observe(kind streamgate.Kind, ev *streamgate.Event) {
-	if kind == streamgate.Content {
+	if kind == streamgate.Content && streamgate.Output(r.protocol, ev) {
 		now := time.Now()
 		if r.first.IsZero() {
 			r.first = now
