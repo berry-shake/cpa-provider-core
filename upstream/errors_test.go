@@ -47,18 +47,37 @@ func TestUpstreamErrorMapping(t *testing.T) {
 	}
 }
 
-// Remap sees the code and the untruncated message before the default
-// mapping, may pick the status and rewrite the message; 0 keeps the default
-// status.
+// Every provider reads the three error body shapes and drops a leading
+// "[code=...] " from the message.
+func TestUpstreamErrorShapes(t *testing.T) {
+	errs := Errors{Prefix: "test: "}
+	for _, tc := range []struct {
+		status        int
+		body          string
+		code, message string
+	}{
+		{404, `{"error":{"code":"model_not_found","message":"[code=model_not_found] The requested model was not found.","type":"model_not_found"}}`, "model_not_found", "test: The requested model was not found."},
+		{400, `{"error":"[code=bad_input] input is empty"}`, "upstream_400", "test: input is empty"},
+		{400, `{"code":"bad_input","message":"[code=bad_input] input is empty"}`, "bad_input", "test: input is empty"},
+		{400, `{"error":"[code=bad] "}`, "upstream_400", "test: [code=bad]"},
+		{400, `{"error":{"message":"see [code=x] later"}}`, "upstream_400", "test: see [code=x] later"},
+	} {
+		perr := errs.Upstream(tc.status, http.Header{}, []byte(tc.body))
+		if perr.Code != tc.code || perr.Message != tc.message {
+			t.Errorf("%s: got %q %q", tc.body, perr.Code, perr.Message)
+		}
+	}
+}
+
+// Remap sees the code and the untruncated message (without its "[code=...]"
+// prefix) before the default mapping, may pick the status and rewrite the
+// message; 0 keeps the default status.
 func TestRemap(t *testing.T) {
 	var seen []string
 	errs := Errors{Prefix: "test: ", Remap: func(status int, code, message string) (int, string) {
 		seen = append(seen, code)
 		if status == http.StatusForbidden && code == "request_blocked" {
 			return http.StatusBadRequest, message
-		}
-		if rest, ok := strings.CutPrefix(message, "[code="+code+"] "); ok {
-			return 0, rest
 		}
 		return 0, message
 	}}

@@ -31,12 +31,12 @@ type Errors struct {
 
 // Remap is a provider's own rule for upstream error answers. It gets the
 // upstream status and the code and message read from the body (the message
-// trimmed but not yet truncated; both empty when the body has none) and
-// returns the message to report instead and the status to map to. A mapped
-// status of 0 keeps the default mapping of Upstream.
+// trimmed, without a "[code=...] " prefix, but not yet truncated; both empty
+// when the body has none) and returns the message to report instead and the
+// status to map to. A mapped status of 0 keeps the default mapping of
+// Upstream.
 //
-// Wokey reports 403 request_blocked and model_denylisted as 400; OpenDesign
-// drops the "[code=...] " prefix OpenAI-style messages repeat.
+// Wokey reports 403 request_blocked and model_denylisted as 400.
 type Remap func(status int, code, message string) (mapped int, newMessage string)
 
 // Upstream converts a non-2xx upstream answer into a plugin error whose
@@ -104,7 +104,8 @@ func defaultStatus(status int) int {
 // upstreams use: {"error":"message"}, OpenAI style
 // {"error":{"code","type","message"}}, Anthropic style
 // {"type":"error","error":{"type","message"}} and flat {"code","message"}.
-// The message is trimmed, not truncated.
+// The message is trimmed, not truncated, and loses the "[code=...] " prefix
+// some OpenAI-style gateways repeat the code in.
 func parseBody(body []byte) (string, string) {
 	var parsed struct {
 		Code    any    `json:"code"`
@@ -131,7 +132,18 @@ func parseBody(body []byte) (string, string) {
 			message = strings.TrimSpace(inner)
 		}
 	}
-	return code, message
+	return code, stripCodePrefix(message)
+}
+
+// stripCodePrefix drops a leading "[code=...] " from a message
+// ("[code=model_not_found] The requested model was not found.").
+func stripCodePrefix(message string) string {
+	if strings.HasPrefix(message, "[code=") {
+		if end := strings.Index(message, "] "); end > 0 {
+			return strings.TrimSpace(message[end+2:])
+		}
+	}
+	return message
 }
 
 // retryAfterSeconds parses Retry-After as delta seconds or an HTTP date.
