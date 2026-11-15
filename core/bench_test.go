@@ -83,11 +83,11 @@ func BenchmarkStreamMessages(b *testing.B) {
 	b.SetBytes(int64(len(stream)))
 	b.ReportAllocs()
 	for b.Loop() {
-		rec := &callRecord{}
+		rec := &callRecord{protocol: provider.Messages}
 		gate := streamgate.New(streamgate.Config{Protocol: provider.Messages, Errors: upstream.Errors{Prefix: "wokey: "}}, true, http.Header{}, func([]byte) error { return nil })
 		gate.Tap = rec.observe
 		errPump := streamgate.Pump(strings.NewReader(stream), true, gate.Push, func() {})
-		if errPump != nil || rec.frames != 201 || rec.usage.output != 200 || rec.entry.FinishReason != "end_turn" {
+		if errPump != nil || rec.frames != 200 || rec.usage.output != 200 || rec.entry.FinishReason != "end_turn" {
 			b.Fatalf("pump = %v, frames %d, usage %+v, finish %q", errPump, rec.frames, rec.usage, rec.entry.FinishReason)
 		}
 	}
