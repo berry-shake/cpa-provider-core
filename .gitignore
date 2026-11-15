@@ -11,3 +11,6 @@ web/dist/
 # OS clutter
 .DS_Store
 Thumbs.db
+
+# IDE settings
+.idea/
