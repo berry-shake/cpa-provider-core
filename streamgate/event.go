@@ -20,6 +20,10 @@ type Event struct {
 
 	decoded bool
 	payload map[string]any
+
+	// typ caches eventType: the gate and the request log both ask for it.
+	typed bool
+	typ   string
 }
 
 type member struct {
@@ -107,10 +111,15 @@ func (e *Event) Text(key string) string {
 
 // eventType is the type member of the data, or else the event name.
 func (e *Event) eventType() string {
-	if eventType := e.stringMember("type"); eventType != "" {
-		return eventType
+	if e.typed {
+		return e.typ
 	}
-	return e.Name()
+	e.typ = e.stringMember("type")
+	if e.typ == "" {
+		e.typ = e.Name()
+	}
+	e.typed = true
+	return e.typ
 }
 
 // stringMember returns a top-level string member, or "".
