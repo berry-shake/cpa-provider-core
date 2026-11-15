@@ -82,7 +82,7 @@ type Catalog interface {
 	Summary() CatalogSummary // 模型数、版本、拉取和检查时间、最近的错误
 	Has(id string) bool
 	ModelInfos(all bool, ids []string) []pluginapi.ModelInfo
-	UpstreamID(model, prefix string) string
+	UpstreamID(model, prefix string) string // 一般直接用 provider.UpstreamID
 	ModelsView() any         // 管理页的模型列表，必须编码成 JSON 数组
 }
 ```
@@ -109,7 +109,7 @@ type Catalog interface {
 结构最简单的是 Ollama 和 OpenCode，照着其中一个做：
 
 1. **建仓库**：复制模板仓库，改模块路径、插件 ID、显示名和 logo。`go.mod` 里 `require github.com/berry-shake/cpa-provider-core vX.Y.Z`。
-2. **写适配器** `internal/<id>/adapter.go`：在 `Spec` 里填 ID、显示名、仓库地址，以及 `config.Profile`（默认 base URL、模型前缀、数据目录、库名、配置项说明）；`Endpoint` 返回三种协议的路径；再实现模型目录、`VerifyKey`、账号和额度。上游有特殊需求时再实现对应的可选接口。
+2. **写适配器** `internal/<id>/adapter.go`：在 `Spec` 里填 ID、显示名、仓库地址，以及 `config.Profile`（默认 base URL、模型前缀、数据目录、库名、配置项说明）；`Endpoint` 返回三种协议的路径；再实现模型目录、`VerifyKey`、账号和额度。目录的 `UpstreamID` 直接交给 `provider.UpstreamID(model, prefix, c.Has, provider.SlashedIDs)`；上游模型 ID 一定不带斜杠时用 `provider.FlatIDs`，不认识的前缀一律去掉（Wokey）。上游有特殊需求时再实现对应的可选接口。
 3. **`main.go`**：只保留 cgo 外壳，原样照抄模板，把构造改成自己的适配器：
 
    ```go
