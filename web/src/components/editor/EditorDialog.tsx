@@ -7,6 +7,7 @@ import {
   currentPrefix, newEditor, pickableModels, pickerRows, previewSample, registerPreview, type EditorState, type ProxyChoice,
 } from "../../lib/editor";
 import { store, type State } from "../../state/store";
+import { Select } from "../Select";
 
 function Picker({ t, s, ed }: { t: T; s: State; ed: EditorState }) {
   const all = ed.all;
@@ -85,20 +86,19 @@ function ProxyField({ t, s, ed }: { t: T; s: State; ed: EditorState }) {
   return (
     <div className="field">
       <label htmlFor="f-proxy-choice">{t("form.proxy")}</label>
-      <select
-        className="input"
+      <Select<ProxyChoice>
         id="f-proxy-choice"
         value={choice}
-        onChange={(event) => store.updateEditor({ proxyChoice: event.target.value as ProxyChoice })}
-      >
-        <option value="">{global ? t("form.proxyInheritValue", { proxy: global }) : t("form.proxyInherit")}</option>
-        <option value="direct">{t("form.proxyDirect")}</option>
-        {proxies.map((p) => (
-          <option key={p.id} value={"id:" + p.id}>{(p.name || p.label) + " — " + (p.label || p.url)}</option>
-        ))}
-        {orphan ? <option value={choice}>{orphanName}</option> : null}
-        <option value="custom">{t("form.proxyCustom")}</option>
-      </select>
+        onChange={(proxyChoice) => store.updateEditor({ proxyChoice })}
+        options={[
+          { value: "", label: global ? t("form.proxyInheritValue", { proxy: global }) : t("form.proxyInherit") },
+          { value: "direct", label: t("form.proxyDirect") },
+          // A proxy without a name is shown by its address alone.
+          ...proxies.map((p) => ({ value: ("id:" + p.id) as ProxyChoice, label: p.name || p.label || p.url, detail: p.name ? p.label || p.url : undefined })),
+          ...(orphan ? [{ value: choice, label: orphanName }] : []),
+          { value: "custom", label: t("form.proxyCustom") },
+        ]}
+      />
       {choice === "custom" ? (
         <input
           className="input mono"

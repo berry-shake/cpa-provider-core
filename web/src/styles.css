@@ -561,6 +561,44 @@ select.input {
 select.input.input-sm { padding-right: 28px; background-position: right 8px center; }
 select.input:hover { border-color: var(--text-muted); }
 select.input:focus { border-color: var(--accent); }
+/* Select: the page's own dropdown (components/Select.tsx) instead of the
+   browser's native menu. The trigger looks like select.input. */
+.select { position: relative; min-width: 0; }
+.select-trigger {
+  display: flex; align-items: center; text-align: left; cursor: pointer; padding-right: 32px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%2396908a' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m3 4.5 3 3 3-3'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 10px center; background-size: 12px 12px;
+}
+.select-trigger.input-sm { padding-right: 28px; background-position: right 8px center; }
+.select-trigger:not(:disabled):hover { border-color: var(--text-muted); }
+.select-trigger:focus-visible, .select-trigger.open { border-color: var(--accent); }
+.select-trigger:disabled { cursor: default; }
+.select-value { display: flex; align-items: baseline; gap: 10px; min-width: 0; overflow: hidden; }
+.select-value .select-label { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.select-detail { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: 12px; color: var(--text-muted); }
+.select-menu {
+  position: fixed; z-index: 1000; margin: 0; padding: 4px; list-style: none;
+  max-width: calc(100vw - 16px); overflow-y: auto; overscroll-behavior: contain;
+  background: var(--bg-elevated); color: var(--text-primary);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-md);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.16), 0 2px 6px rgba(0, 0, 0, 0.06);
+}
+.select-option {
+  display: grid; grid-template-columns: 14px auto minmax(0, 1fr); align-items: center; gap: 8px;
+  padding: 7px 12px 7px 8px; border-radius: var(--radius-sm);
+  font-size: 13px; white-space: nowrap; cursor: pointer; user-select: none;
+}
+.select-option.active { background: var(--bg-muted); }
+.select-option[aria-selected="true"] { color: var(--accent); font-weight: 600; }
+.select-option[aria-selected="true"] .select-detail { color: var(--accent); opacity: 0.75; font-weight: 400; }
+.select-option[aria-selected="true"] .select-check::before {
+  content: ""; display: block; width: 9px; height: 5px; margin: 0 0 3px 2px;
+  border-left: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(-45deg);
+}
+.select-option .select-detail { justify-self: end; padding-left: 24px; }
+.toolbar .select { flex: 0 0 auto; }
+.toolbar .select-trigger, .pager-info .select-trigger { width: auto; }
+.field .select + .input { margin-top: 6px; }
 .form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px 16px; }
 .field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .field > label, .field > .label { font-size: 12px; font-weight: 600; color: var(--text-secondary); }

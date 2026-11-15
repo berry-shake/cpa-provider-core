@@ -3,6 +3,7 @@ import type { LogPage } from "../../api/types";
 import type { T } from "../../i18n";
 import { jumpTarget, LOG_SIZES, pagerNumbers, pagerView } from "../../lib/logs";
 import { store } from "../../state/store";
+import { Select } from "../Select";
 
 // Each loaded page gets its own jump box, so a reload starts it over.
 const pageIDs = new WeakMap<LogPage, number>();
@@ -77,14 +78,13 @@ export function Pager({ t, page, shown, size }: { t: T; page: LogPage; shown: nu
     <>
       <div className="pager-info">
         <span>{t("logs.page", { from: page.offset + 1, to: page.offset + shown, total: page.total })}</span>
-        <select
-          className="input input-sm"
+        <Select
+          small
           aria-label={t("logs.pageSize", { n: size })}
-          value={size}
-          onChange={(event) => store.setLogsSize(Number(event.target.value))}
-        >
-          {LOG_SIZES.map((n) => <option key={n} value={n}>{t("logs.pageSize", { n })}</option>)}
-        </select>
+          value={String(size)}
+          onChange={(value) => store.setLogsSize(Number(value))}
+          options={LOG_SIZES.map((n) => ({ value: String(n), label: t("logs.pageSize", { n }) }))}
+        />
       </div>
       <div className="pager-nav">
         <button className="btn btn-secondary btn-sm" type="button" disabled={current <= 0} onClick={() => go(current - 1)}>

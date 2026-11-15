@@ -50,7 +50,7 @@ web/
   - `EditorFields`：编辑器里优先级后面的字段；
   - `Dialogs`：额外的弹窗。
 
-`src/components/keys/parts.tsx` 提供拼卡片用的 `StatItem`、`Meter`、`Bar`、`UsagePending`。插件需要状态时用公共 store 的 `api.request`、`setBusy`、`setQuota`、`notify`、`handleError`、`confirmTwice`、`refresh`、`showLogin`。
+`src/components/keys/parts.tsx` 提供拼卡片用的 `StatItem`、`Meter`、`Bar`、`UsagePending`。需要下拉框时用 `src/components/Select.tsx` 的 `Select`（页面自绘的菜单，不用浏览器原生菜单，支持键盘操作，放在对话框里按 Esc 只关菜单）。插件需要状态时用公共 store 的 `api.request`、`setBusy`、`setQuota`、`notify`、`handleError`、`confirmTwice`、`refresh`、`showLogin`。
 
 注意循环引用：公共模块加载时就会读 `plugin`，所以 `plugin.ts` 只能放常量和函数，引用公共代码的运行时值只能在函数里用。
 

@@ -3,6 +3,7 @@ import { localeTag, type T } from "../../i18n";
 import { allCredentials } from "../../lib/credentials";
 import { fmtCount, fmtPct, fmtRate, fmtTokens } from "../../lib/format";
 import { store, type State } from "../../state/store";
+import { Select } from "../Select";
 import { LogHead, LogRow } from "./LogRow";
 import { Pager } from "./Pager";
 import { RangeTools } from "./RangeTools";
@@ -90,11 +91,17 @@ export function LogsPanel({ t, s }: { t: T; s: State }) {
             value={logs.search}
             onChange={(event) => store.setLogsSearch(event.target.value)}
           />
-          <select className="input input-sm" id="logs-status" value={logs.status} onChange={(event) => store.setLogsStatus(event.target.value)}>
-            <option value="all">{t("logs.all")}</option>
-            <option value="success">{t("logs.success")}</option>
-            <option value="error">{t("logs.error")}</option>
-          </select>
+          <Select
+            small
+            id="logs-status"
+            value={logs.status}
+            onChange={(status) => store.setLogsStatus(status)}
+            options={[
+              { value: "all", label: t("logs.all") },
+              { value: "success", label: t("logs.success") },
+              { value: "error", label: t("logs.error") },
+            ]}
+          />
           <span className="count" id="logs-count">{page ? t("logs.count", { n: page.total }) : ""}</span>
         </div>
         <div className="log-grid" id="logs-body">{body}</div>
