@@ -76,6 +76,42 @@ type Spec struct {
 	// besides Anthropic-Beta and Anthropic-Version (Wokey's X-End-User-Id).
 	// Client credentials must never be listed.
 	ForwardHeaders []string
+	// Protocols are the protocols the upstream serves, declared to CPA as
+	// the executor formats; CPA translates requests in the others before
+	// they reach the plugin. Empty means all three (Protocols). ClinePass
+	// serves Chat Completions only.
+	Protocols []Protocol
+	// AggregateChat sends non-stream Chat Completions calls upstream as
+	// streams and aggregates the events into one chat.completion, for
+	// upstreams whose non-stream answers cannot be passed on as they are
+	// (ClinePass wraps them and sometimes returns them empty). Errors and
+	// truncation anywhere in the stream fail the call.
+	AggregateChat bool
+}
+
+// Serves reports whether the provider serves a protocol (Protocols).
+func (s Spec) Serves(protocol Protocol) bool {
+	if len(s.Protocols) == 0 {
+		return true
+	}
+	for _, served := range s.Protocols {
+		if served == protocol {
+			return true
+		}
+	}
+	return false
+}
+
+// ServedProtocols are the protocols the provider serves, in the order of
+// Protocols.
+func (s Spec) ServedProtocols() []Protocol {
+	out := make([]Protocol, 0, len(Protocols))
+	for _, protocol := range Protocols {
+		if s.Serves(protocol) {
+			out = append(out, protocol)
+		}
+	}
+	return out
 }
 
 // Texts are the texts each provider words its own way.

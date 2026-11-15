@@ -41,6 +41,12 @@ README 里只列了接口和用途，这里写每个接口的完整约定：调�
 ## Spec 里各家不同的字段
 
 - `ForwardHeaders`：除了 `Anthropic-Beta`、`Anthropic-Version` 以外要原样转发给上游的客户端请求头。Wokey 转发 `X-End-User-Id`。不能放客户端凭证。
+- `Protocols`：上游原生支持的协议，作为执行器格式声明给 CPA；留空就是三种都支持。没声明的协议由 CPA 转换后再交给插件，插件收到这类格式的请求时回 400 `unsupported_format`。`Endpoint` 只会被问到声明过的协议。ClinePass 只声明 Chat Completions。
+- `AggregateChat`：非流式的 Chat Completions 请求改用流式发给上游（请求体里 `stream` 设为 `true`，补 `stream_options.include_usage`，`Accept: text/event-stream`），再把事件聚合成一个 `chat.completion` 返回。流照常经过闸门，所以 `StreamFixer`、流内错误和截断的判断、请求日志都照常生效；和发给客户端的流不同，输出开始后才出现的错误也让整个请求失败，因为还什么都没交出去。
+  - 聚合规则：`content`、`reasoning_content`、`reasoning`、`refusal` 按顺序拼接；`tool_calls` 按 index 合并，`function.name`、`function.arguments` 拼接，`id`、`type` 取最后的值；其他对象逐个成员合并、数组拼接、标量取最后的值；`finish_reason` 和 `usage` 取最后的值；chunk 顶层的其他字段（`id`、`model`、`created` 等）照抄。
+  - 没有 choice 或没有任何输出时回 502 `empty_response`（可重试）。上游回的不是 SSE 时：带 `choices` 的 JSON 原样返回，带 `error` 或 `success:false` 的按上游错误处理，其他回 502 `invalid_upstream_response`。
+  - 请求日志按非流式记（没有 frames），首字时间记上游流的首个输出。
+  - ClinePass 的原生非流式回答包在 `{success,data}` 里，而且偶尔为空，所以打开这个开关。
 
 ## 旧日志迁移
 

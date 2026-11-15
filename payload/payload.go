@@ -106,8 +106,14 @@ func Set(body []byte, found map[string]Span, errScan error, key string, rawValue
 // SetString sets a top-level string member, inserting it when absent.
 func SetString(body []byte, key, value string) ([]byte, error) {
 	encoded, _ := json.Marshal(value)
+	return SetRaw(body, key, encoded)
+}
+
+// SetRaw sets a top-level member to a JSON value, inserting it when absent.
+// Unlike Set it scans the body itself, for a body edited since its scan.
+func SetRaw(body []byte, key string, rawValue []byte) ([]byte, error) {
 	found, errScan := Members(body, key)
-	return Set(body, found, errScan, key, encoded)
+	return Set(body, found, errScan, key, rawValue)
 }
 
 // Insert adds a member at the start of a JSON object.

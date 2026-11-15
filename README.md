@@ -12,8 +12,9 @@
 | [cpa-ollama-plugin](https://github.com/berry-shake/cpa-ollama-plugin) | Ollama Cloud | 套餐额度、账号用量 |
 | [cpa-opencode-plugin](https://github.com/berry-shake/cpa-opencode-plugin) | OpenCode | 会话请求头、count_tokens 转发、Go 订阅的 5h / 7d / 月度窗口 |
 | [cpa-opendesign-plugin](https://github.com/berry-shake/cpa-opendesign-plugin) | OpenDesign | 每个 Key 一份模型目录、vela 账号登录、Messages 流修补 |
+| [cpa-clinepass-plugin](https://github.com/berry-shake/cpa-clinepass-plugin) | ClinePass（Cline） | 只声明 Chat Completions、非流式聚合、`cline-pass/` 命名空间、套餐 5h / 7d / 月度窗口、`success:false` 流修补 |
 
-四个插件仍然各自编成独立的 .so，各有自己的插件 ID、认证文件类型、数据目录和版本号。
+五个插件仍然各自编成独立的 .so，各有自己的插件 ID、认证文件类型、数据目录和版本号。
 
 ## 结构
 
@@ -48,8 +49,8 @@ CPA ──c-shared RPC──▶ 插件 main.go（cgo 外壳）
 
 适配器不用管下面这些，四个插件行为一致：
 
-- **注册**：Chat Completions、Responses、Messages 三种协议都原样转发，CPA 不做协议转换；凭证文件解析成 CPA 认证；模型按凭证的 `models`、`prefix` 登记，目录变了就更新 `model_revision`，让 CPA 重新登记。
-- **请求**：只在请求体顶层按字节换 `model`，Chat 流式请求补 `stream_options`；User-Agent 是 `cpa-<id>-plugin/<版本>`；转发 `Anthropic-Beta`、`Anthropic-Version`，以及 `Spec.ForwardHeaders` 列出的请求头。
+- **注册**：Chat Completions、Responses、Messages 三种协议都原样转发，CPA 不做协议转换（`Spec.Protocols` 可以只声明其中几种，其余由 CPA 转换）；凭证文件解析成 CPA 认证；模型按凭证的 `models`、`prefix` 登记，目录变了就更新 `model_revision`，让 CPA 重新登记。
+- **请求**：只在请求体顶层按字节换 `model`，Chat 流式请求补 `stream_options`（`Spec.AggregateChat` 时非流式 Chat 请求也改发流式，再聚合成一个回答）；User-Agent 是 `cpa-<id>-plugin/<版本>`；转发 `Anthropic-Beta`、`Anthropic-Version`，以及 `Spec.ForwardHeaders` 列出的请求头。
 - **错误**：能读出 `{"error":{"message"}}`、`{"error":"..."}`、`{"message"}` 三种错误体，去掉消息开头的 `[code=…]`；流里的错误关键字按同一张表定状态码（余额不足报 402、限流报 429 等）；错误消息统一以 `<id>: ` 开头。
 - **请求日志**：存在 `plugins/<id>-data/<库名>`，记 Token、首字时间、两种速度、出口和上游请求 ID。流式请求按客户端实际收到的结果记。
 - **出口**：每个凭证可以单独配代理，没配就用 CPA 全局代理，再没有就直连。同一个出口的请求排队，管理页能检测出口 IP 和延迟。

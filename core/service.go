@@ -392,7 +392,7 @@ func (s *Service) register(request []byte) rpcRegistration {
 	s.kickRefresh()
 	schema := negotiateSchemaVersion(lifecycle.SchemaVersion)
 	intercept := interceptsRequests(schema)
-	formats := executorFormats()
+	formats := executorFormats(s.spec)
 	return rpcRegistration{
 		SchemaVersion: schema,
 		Metadata: pluginapi.Metadata{

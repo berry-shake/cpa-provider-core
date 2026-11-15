@@ -25,12 +25,14 @@ const (
 	maxResponseBytes = 64 << 20
 )
 
-// executorFormats are the protocols the providers serve natively. Declaring
-// all three as both input and output lets CPA pass requests through
-// untranslated.
-func executorFormats() []string {
-	out := make([]string, 0, len(provider.Protocols))
-	for _, protocol := range provider.Protocols {
+// executorFormats are the protocols the provider serves natively
+// (provider.Spec.Protocols, all three by default). Declaring them as both
+// input and output lets CPA pass those requests through untranslated and
+// translate the others.
+func executorFormats(spec provider.Spec) []string {
+	served := spec.ServedProtocols()
+	out := make([]string, 0, len(served))
+	for _, protocol := range served {
 		out = append(out, string(protocol))
 	}
 	return out
@@ -61,7 +63,7 @@ type target struct {
 // providers do not serve has no endpoint; its request log entry has none.
 func (s *Service) targetFor(format string) (target, *pluginabi.Error) {
 	protocol, ok := provider.ProtocolForFormat(format)
-	if !ok {
+	if !ok || !s.spec.Serves(protocol) {
 		return target{}, upstream.RequestError("unsupported_format", s.errors.Prefix+"unsupported executor format "+format)
 	}
 	return target{protocol: protocol, endpoint: s.adapter.Endpoint(protocol)}, nil
@@ -86,6 +88,9 @@ type upstreamCall struct {
 	// fix repairs the call's stream (provider.StreamFixer); nil when the
 	// adapter leaves it as it is.
 	fix provider.StreamFix
+	// aggregate marks a non-stream Chat call sent upstream as a stream
+	// (provider.Spec.AggregateChat); executeBuffered aggregates the answer.
+	aggregate bool
 }
 
 // prepareCall resolves the credential, egress and upstream model for one
@@ -115,7 +120,16 @@ func (s *Service) prepareCall(req pluginapi.ExecutorRequest, to target) (*upstre
 	if errBody != nil {
 		return nil, upstream.RequestError("invalid_request", s.errors.Prefix+errBody.Error())
 	}
-	if _, present := members["stream_options"]; to.protocol == provider.Chat && req.Stream && !present && coreErr == nil {
+	// A non-stream Chat call the adapter wants aggregated goes upstream as a
+	// stream; the stream member is set on the body as it now reads.
+	aggregate := s.spec.AggregateChat && to.protocol == provider.Chat && !req.Stream && !to.countTokens
+	if aggregate {
+		if body, errBody = payload.SetRaw(body, "stream", []byte("true")); errBody != nil {
+			return nil, upstream.RequestError("invalid_request", s.errors.Prefix+errBody.Error())
+		}
+	}
+	streamUpstream := req.Stream || aggregate
+	if _, present := members["stream_options"]; to.protocol == provider.Chat && streamUpstream && !present && coreErr == nil {
 		// Ask for the final usage chunk so CPA can account the request.
 		body = payload.Insert(body, "stream_options", []byte(`{"include_usage":true}`))
 	}
@@ -131,7 +145,7 @@ func (s *Service) prepareCall(req pluginapi.ExecutorRequest, to target) (*upstre
 	header.Set("Authorization", "Bearer "+cred.APIKey)
 	header.Set("Content-Type", "application/json")
 	header.Set("User-Agent", s.userAgent())
-	if req.Stream {
+	if streamUpstream {
 		header.Set("Accept", "text/event-stream")
 	} else {
 		header.Set("Accept", "application/json")
@@ -172,6 +186,7 @@ func (s *Service) prepareCall(req pluginapi.ExecutorRequest, to target) (*upstre
 		keyMasked:     credential.MaskKey(cred.APIKey),
 		egress:        setting.Label(),
 		fix:           fix,
+		aggregate:     aggregate,
 	}, nil
 }
 
@@ -245,6 +260,9 @@ func (s *Service) executeBuffered(req pluginapi.ExecutorRequest, to target) []by
 	}
 	defer func() { _ = resp.Body.Close() }()
 	rec.response(resp)
+	if call.aggregate && resp.StatusCode >= 200 && resp.StatusCode <= 299 {
+		return s.aggregateChat(ctx, resp, call, rec, fail)
+	}
 	body, errRead := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if errRead != nil {
 		return fail(s.errors.Transport(fmt.Errorf("read response: %w", errRead)))
