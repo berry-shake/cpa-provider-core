@@ -333,8 +333,8 @@ func reasoningEffort(body []byte, found map[string]payload.Span) string {
 // alias it used), falling back to the model CPA passed to the executor. The
 // original request is only read when CPA did not report the name.
 func clientModel(req pluginapi.ExecutorRequest, fallback string) string {
-	if requested, _ := req.Metadata["requested_model"].(string); strings.TrimSpace(requested) != "" {
-		return strings.TrimSpace(requested)
+	if requested := requestedModel(req.Metadata); requested != "" {
+		return requested
 	}
 	return firstNonEmpty(payload.TopLevelString(req.OriginalRequest, "model"), fallback)
 }

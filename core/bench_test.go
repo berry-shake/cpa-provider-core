@@ -92,3 +92,58 @@ func BenchmarkStreamMessages(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkDecodeExecutorRequest decodes executor requests of several sizes
+// with decodeExecutorRequest (impl=core) and, for comparison, json.Unmarshal
+// (impl=json), with and without the requested model CPA normally reports.
+// Compare the two with: benchstat -col /impl
+func BenchmarkDecodeExecutorRequest(b *testing.B) {
+	bodies := [][]byte{[]byte(`{"model":"wokey/model-a","max_tokens":1024,"messages":[{"role":"user","content":"Hello"}]}`)}
+	for _, size := range []int{64 << 10, 800 << 10, 4 << 20} {
+		bodies = append(bodies, benchRequestBody(size))
+	}
+	for _, body := range bodies {
+		for _, reported := range []bool{true, false} {
+			req := rpcExecutorRequest{ExecutorRequest: pluginapi.ExecutorRequest{
+				AuthID: "wokey-test.json", Model: "model-a", Format: "claude", Stream: true,
+				Payload: body, OriginalRequest: body,
+				Headers:     http.Header{"User-Agent": {"claude-cli/2.1"}},
+				StorageJSON: []byte(`{"type":"wokey","api_key":"wk-bench-0123456789"}`),
+			}, StreamID: "s1"}
+			if reported {
+				req.Metadata = map[string]any{"requested_model": "wokey/model-a"}
+			}
+			raw, _ := json.Marshal(req)
+			name := fmt.Sprintf("body=%s/requested_model=%t", benchSize(len(body)), reported)
+			b.Run(name+"/impl=json", func(b *testing.B) {
+				b.SetBytes(int64(len(raw)))
+				b.ReportAllocs()
+				for b.Loop() {
+					var out rpcExecutorRequest
+					if errDecode := json.Unmarshal(raw, &out); errDecode != nil {
+						b.Fatal(errDecode)
+					}
+				}
+			})
+			b.Run(name+"/impl=core", func(b *testing.B) {
+				b.SetBytes(int64(len(raw)))
+				b.ReportAllocs()
+				for b.Loop() {
+					if _, errDecode := decodeExecutorRequest(raw); errDecode != nil {
+						b.Fatal(errDecode)
+					}
+				}
+			})
+		}
+	}
+}
+
+func benchSize(n int) string {
+	switch {
+	case n >= 1<<20:
+		return fmt.Sprintf("%.1fMiB", float64(n)/(1<<20))
+	case n >= 1<<10:
+		return fmt.Sprintf("%dKiB", n>>10)
+	}
+	return fmt.Sprintf("%dB", n)
+}

@@ -6,6 +6,8 @@ README 里只列了接口和用途，这里写每个接口的完整约定：调�
 
 核心用类型断言检查适配器实现了哪些接口，没实现的就走默认行为。
 
+`CallInput.Request` 是 CPA 发来的执行请求，但 `OriginalRequest` 只在核心需要时才解码（CPA 没在 `Metadata` 里给 `requested_model`），其余情况为 nil。适配器要读请求内容时用 `Payload` 和 `CallInput.Members`。
+
 - `HeaderDecorator`：`Decorate(header http.Header, in CallInput)`，给执行请求加自己的头。OpenCode 用它加 `X-Opencode-Session`。
 - `RequestReader`：`RequestMembers() []string`，`Decorate` 或 `StreamFix` 要读的顶层请求成员（核心自己找 `model`、`stream_options` 和推理设置）。核心在同一次扫描里找它们，结果放在 `CallInput.Members`（`CallInput.ScanErr` 非 nil 时请求体有格式错误）。它只是适配器声明自己要读什么，不影响核心的判断：扫描为了找这些成员多走一段、在核心成员都找到之后才碰到的格式错误，不算进是否补 `stream_options`、记录哪个推理强度。OpenCode 为了算会话 ID 读 `prompt_cache_key`、`metadata`、`messages`、`input`、`system`、`instructions`；OpenDesign 的 `StreamFix` 读 `max_tokens`。
 - `TokenCounter`：`CountTokensEndpoint() string`。实现了就把 count_tokens 当 Messages 请求转发，不写请求日志（OpenCode）；没实现就不解码请求，直接回 501 `<id>: count_tokens is not supported by <显示名>`。

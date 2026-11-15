@@ -146,7 +146,10 @@ type Adapter interface {
 
 // CallInput is what Decorate gets about an executor request.
 type CallInput struct {
-	// Request is the executor request as CPA sent it.
+	// Request is the executor request as CPA sent it, except that
+	// OriginalRequest is only decoded when the core needs it (CPA did not
+	// report the requested model in Metadata) and is nil otherwise; read the
+	// request from Payload and Members.
 	Request pluginapi.ExecutorRequest
 	// Members are the top-level request members found by the scan (the
 	// core's and RequestReader's); ScanErr reports a malformed body met

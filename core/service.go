@@ -299,15 +299,15 @@ func (s *Service) Call(method string, request []byte) []byte {
 		return okEnvelope(s.modelsForAuth(req.AuthModelRequest))
 
 	case pluginabi.MethodExecutorExecute:
-		var req rpcExecutorRequest
-		if errUnmarshal := json.Unmarshal(request, &req); errUnmarshal != nil {
-			return ErrorEnvelope("invalid_request", "decode executor request: "+errUnmarshal.Error())
+		req, errDecode := decodeExecutorRequest(request)
+		if errDecode != nil {
+			return ErrorEnvelope("invalid_request", "decode executor request: "+errDecode.Error())
 		}
 		return s.execute(req.ExecutorRequest)
 	case pluginabi.MethodExecutorExecuteStream:
-		var req rpcExecutorRequest
-		if errUnmarshal := json.Unmarshal(request, &req); errUnmarshal != nil {
-			return ErrorEnvelope("invalid_request", "decode executor request: "+errUnmarshal.Error())
+		req, errDecode := decodeExecutorRequest(request)
+		if errDecode != nil {
+			return ErrorEnvelope("invalid_request", "decode executor request: "+errDecode.Error())
 		}
 		return s.executeStream(req)
 	case pluginabi.MethodExecutorCountTokens:
@@ -320,9 +320,9 @@ func (s *Service) Call(method string, request []byte) []byte {
 				HTTPStatus: http.StatusNotImplemented,
 			})
 		}
-		var req rpcExecutorRequest
-		if errUnmarshal := json.Unmarshal(request, &req); errUnmarshal != nil {
-			return ErrorEnvelope("invalid_request", "decode executor request: "+errUnmarshal.Error())
+		req, errDecode := decodeExecutorRequest(request)
+		if errDecode != nil {
+			return ErrorEnvelope("invalid_request", "decode executor request: "+errDecode.Error())
 		}
 		return s.countTokens(req.ExecutorRequest)
 	case pluginabi.MethodExecutorHTTPRequest:
