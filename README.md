@@ -14,7 +14,7 @@
 | [cpa-opendesign-plugin](https://github.com/berry-shake/cpa-opendesign-plugin) | OpenDesign | 每个 Key 一份模型目录、vela 账号登录、Messages 流修补 |
 | [cpa-clinepass-plugin](https://github.com/berry-shake/cpa-clinepass-plugin) | ClinePass（Cline） | 只声明 Chat Completions、非流式聚合、`cline-pass/` 命名空间、套餐 5h / 7d / 月度窗口、`success:false` 流修补 |
 
-五个插件仍然各自编成独立的 .so，各有自己的插件 ID、认证文件类型、数据目录和版本号。
+这些插件仍然各自编成独立的 .so，各有自己的插件 ID、认证文件类型、数据目录和版本号。
 
 ## 结构
 
@@ -47,7 +47,7 @@ CPA ──c-shared RPC──▶ 插件 main.go（cgo 外壳）
 
 ## 核心统一处理的部分
 
-适配器不用管下面这些，四个插件行为一致：
+适配器不用管下面这些，各插件行为一致：
 
 - **注册**：Chat Completions、Responses、Messages 三种协议都原样转发，CPA 不做协议转换（`Spec.Protocols` 可以只声明其中几种，其余由 CPA 转换）；凭证文件解析成 CPA 认证；模型按凭证的 `models`、`prefix` 登记，目录变了就更新 `model_revision`，让 CPA 重新登记。
 - **请求**：只在请求体顶层按字节换 `model`，Chat 流式请求补 `stream_options`（`Spec.AggregateChat` 时非流式 Chat 请求也改发流式，再聚合成一个回答）；User-Agent 是 `cpa-<id>-plugin/<版本>`；转发 `Anthropic-Beta`、`Anthropic-Version`，以及 `Spec.ForwardHeaders` 列出的请求头。
@@ -145,11 +145,11 @@ CI（`.github/workflows/test.yml`）在推送和打 tag 时跑同样的检查。
 
 ## 发版
 
-1. core 的修改推到 main，CI 通过后打 tag（`v0.1.1` 这样，只加最后一位）。
+1. core 的修改推到 main，CI 通过后打 tag（`v0.1.1` 这样，只加最后一位，满 9 进位：`v0.1.9` 之后是 `v0.2.0`）。tag 推出去就被 Go 模块代理和校验和数据库记下，不能重打，所以先测完再打。
 2. 每个插件仓库执行 `go mod edit -require=github.com/berry-shake/cpa-provider-core@vX.Y.Z && go mod tidy`。关掉 go.work（`GOWORK=off`）再跑一遍测试和 `make web`，提交后按插件自己的版本号打 tag。
-3. 四个 release 都出来以后，改插件商店里的版本号，然后部署。
+3. 所有插件的 release 都出来以后，改插件商店里的版本号，然后部署。
 
-四个插件始终升到同一个 core 版本，不让它们停在不同版本上。core 的导出接口是四个插件共用的 API，尽量只增不改；要改就在同一轮里把四个插件一起改完。
+所有插件始终升到同一个 core 版本，不让它们停在不同版本上。core 的导出接口是所有插件共用的 API，尽量只增不改；要改就在同一轮里把所有插件一起改完。
 
 ## License
 

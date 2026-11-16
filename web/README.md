@@ -1,6 +1,6 @@
 # 管理页公共前端
 
-四个供应商插件（wokey、ollama、opencode、opendesign）的管理页共用这里的代码：登录、标签页、凭证卡片外壳、编辑弹窗、模型目录、请求日志、出口代理、配置页、i18n、主题和样式。各插件只写自己不同的部分，放在插件仓库的 `web/src/provider/`。
+各供应商插件（wokey、ollama、opencode、opendesign、clinepass）的管理页共用这里的代码：登录、标签页、凭证卡片外壳、编辑弹窗、模型目录、请求日志、出口代理、配置页、i18n、主题和样式。各插件只写自己不同的部分，放在插件仓库的 `web/src/provider/`。
 
 技术栈和插件仓库一致：React 18 + TypeScript + Vite 5 + vite-plugin-singlefile，测试用 Vitest。
 
