@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 	"unicode"
 
@@ -84,7 +85,11 @@ func applyCredentialInput(fields map[string]any, input credentialInput, cfg conf
 		setOrDelete(fields, credential.KeyBaseURL, base)
 	}
 	if input.ProxyURL != nil {
-		proxy := strings.TrimSpace(*input.ProxyURL)
+		saved, _ := fields[credential.KeyProxyURL].(string)
+		proxy, errHidden := keepHiddenPassword(strings.TrimSpace(*input.ProxyURL), saved)
+		if errHidden != nil {
+			return errHidden
+		}
 		if errProxy := egress.ValidateProxy(proxy); errProxy != nil {
 			return &errorBody{Error: "invalid_proxy", Message: "proxy_url: " + errProxy.Error()}
 		}
@@ -143,6 +148,40 @@ func applyCredentialInput(fields map[string]any, input credentialInput, cfg conf
 		}
 	}
 	return nil
+}
+
+// redactedPassword is what the views show in place of a proxy password
+// (url.URL.Redacted).
+const redactedPassword = "xxxxx"
+
+// keepHiddenPassword puts the saved password back into a proxy address
+// edited from the redacted one the views show. The edit form shows a saved
+// custom address with its password as xxxxx, so changing another part of
+// it, such as the port, sends xxxxx back. The saved password is kept for the
+// same scheme, user and host; for another one it has to be typed again,
+// rather than saving xxxxx or sending the password somewhere new. An
+// xxxxx password with no saved one to restore is taken as typed.
+func keepHiddenPassword(proxy, saved string) (string, *errorBody) {
+	typed, errTyped := url.Parse(proxy)
+	if errTyped != nil || typed.User == nil {
+		return proxy, nil
+	}
+	if password, set := typed.User.Password(); !set || password != redactedPassword {
+		return proxy, nil
+	}
+	old, errOld := url.Parse(strings.TrimSpace(saved))
+	if errOld != nil || old.User == nil {
+		return proxy, nil
+	}
+	oldPassword, oldSet := old.User.Password()
+	if !oldSet {
+		return proxy, nil
+	}
+	if !strings.EqualFold(typed.Scheme, old.Scheme) || typed.User.Username() != old.User.Username() || !strings.EqualFold(typed.Hostname(), old.Hostname()) {
+		return "", &errorBody{Error: "proxy_password_hidden", Message: "proxy_url: the saved password is hidden as " + redactedPassword + " and is kept only for the same scheme, user and host; type the password again"}
+	}
+	typed.User = url.UserPassword(old.User.Username(), oldPassword)
+	return typed.String(), nil
 }
 
 func setOrDelete(fields map[string]any, key, value string) {
