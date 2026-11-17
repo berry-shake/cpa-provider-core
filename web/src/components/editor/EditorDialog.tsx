@@ -193,7 +193,10 @@ export function EditorDialog({ t, s }: { t: T; s: State }) {
                 ref={keyInput}
                 className="input mono"
                 id="f-key"
-                type="password"
+                type="text"
+                autoComplete="off"
+                autoCapitalize="off"
+                autoCorrect="off"
                 spellCheck={false}
                 placeholder={t("form.keyPlaceholder")}
                 value={ed.key}
