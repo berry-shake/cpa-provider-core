@@ -315,6 +315,13 @@ header.hero { display: flex; flex-direction: column; align-items: stretch; gap: 
 .kv dd { min-width: 0; font-size: 12.5px; font-weight: 600; overflow-wrap: anywhere; }
 .kv dd .sub { font-weight: 400; }
 .kv > :nth-last-child(-n+2) { border-bottom: none; }
+.config-wide { grid-column: 1 / -1; }
+/* A row of figures: each dt above its dd, one column per pair. */
+.kv.kv-row { grid-template-columns: none; grid-template-rows: auto auto; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
+.kv.kv-row dt, .kv.kv-row dd { border-bottom: none; border-left: 1px solid var(--border-subtle); padding: 2px 16px; }
+.kv.kv-row dt { padding-top: 4px; }
+.kv.kv-row dd { padding-bottom: 4px; }
+.kv.kv-row > :nth-child(-n+2) { border-left: none; padding-left: 0; }
 .head-side { display: flex; align-items: center; gap: 8px; }
 details.help { margin-top: 12px; font-size: 12.5px; color: var(--text-secondary); }
 details.help summary { display: inline-flex; align-items: center; gap: 6px; color: var(--accent); font-weight: 600; cursor: pointer; list-style: none; }
@@ -669,6 +676,10 @@ footer a:hover { color: var(--text-primary); }
   .summary .strip-item:last-child:nth-child(odd) { grid-column: 1 / -1; }
   .summary .strip-item:nth-child(n+3) { border-top: 1px solid var(--border-subtle); }
   .config-grid { grid-template-columns: 1fr; }
+  .kv.kv-row { grid-template-columns: minmax(120px, auto) minmax(0, 1fr); grid-template-rows: none; grid-auto-flow: row; grid-auto-columns: auto; }
+  .kv.kv-row dt, .kv.kv-row dd { border-left: none; padding: 9px 0; border-bottom: 1px solid var(--border-subtle); }
+  .kv.kv-row dt { padding-right: 16px; }
+  .kv.kv-row > :nth-last-child(-n+2) { border-bottom: none; }
 }
 @media (max-width: 720px) {
   main { padding: 12px 12px 20px; }

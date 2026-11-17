@@ -376,6 +376,19 @@ describe("ConfigPanel runtime", () => {
     ]);
   });
 
+  it("puts the runtime card on its own row below both columns", () => {
+    const doc = html(renderToStaticMarkup(<ConfigPanel t={t} s={state({
+      go_version: "go1.26.10", heap_alloc: 1, heap_inuse: 1, heap_idle: 1, heap_released: 1, stack_inuse: 1, sys: 1, num_gc: 1, goroutines: 1, gomaxprocs: 1,
+    })} />));
+    const card = doc.querySelector("#runtime-card");
+    expect(card).not.toBeNull();
+    expect(card!.parentElement!.classList.contains("config-grid")).toBe(true);
+    expect(card!.classList.contains("config-wide")).toBe(true);
+    expect(doc.querySelector(".config-side #runtime-card")).toBeNull();
+    expect(doc.querySelector("#runtime-list")!.classList.contains("kv-row")).toBe(true);
+    expect(doc.querySelector("#config-list")!.classList.contains("kv-row")).toBe(false);
+  });
+
   it("leaves the card out for plugins that do not report a runtime", () => {
     const doc = html(renderToStaticMarkup(<ConfigPanel t={t} s={state()} />));
     expect(doc.querySelector("#runtime-list")).toBeNull();

@@ -13,9 +13,10 @@ interface KV {
   subClass?: string;
 }
 
-function KVList({ id, rows }: { id: string; rows: KV[] }) {
+/** row lays the pairs out side by side, one column each, on wide screens. */
+function KVList({ id, rows, row }: { id: string; rows: KV[]; row?: boolean }) {
   return (
-    <dl className="kv" id={id}>
+    <dl className={row ? "kv kv-row" : "kv"} id={id}>
       {rows.map((row) => [
         <dt key={row.label + ":dt"}>{row.label}</dt>,
         <dd key={row.label + ":dd"}>
@@ -135,20 +136,6 @@ export function ConfigPanel({ t, s }: { t: T; s: State }) {
               </details>
             </div>
           </section>
-          {data && data.runtime ? (
-            <section className="card">
-              <div className="card-header">
-                <div className="card-title">
-                  <h2>{t("runtime.title")}</h2>
-                  <span className="hint">{t("runtime.hint")}</span>
-                </div>
-              </div>
-              <div className="card-body">
-                <KVList id="runtime-list" rows={runtimeRows(t, data.runtime)} />
-                <p className="config-note">{t("runtime.note")}</p>
-              </div>
-            </section>
-          ) : null}
           <section className="card">
             <div className="card-header">
               <div className="card-title">
@@ -161,6 +148,21 @@ export function ConfigPanel({ t, s }: { t: T; s: State }) {
             </div>
           </section>
         </div>
+        {/* The runtime figures span both columns, one row of them, so the two columns stay even. */}
+        {data && data.runtime ? (
+          <section className="card config-wide" id="runtime-card">
+            <div className="card-header">
+              <div className="card-title">
+                <h2>{t("runtime.title")}</h2>
+                <span className="hint">{t("runtime.hint")}</span>
+              </div>
+            </div>
+            <div className="card-body">
+              <KVList id="runtime-list" row rows={runtimeRows(t, data.runtime)} />
+              <p className="config-note">{t("runtime.note")}</p>
+            </div>
+          </section>
+        ) : null}
       </div>
     </section>
   );
