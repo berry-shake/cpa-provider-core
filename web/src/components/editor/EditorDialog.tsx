@@ -125,12 +125,13 @@ export function EditorDialog({ t, s }: { t: T; s: State }) {
   const keyInput = useRef<HTMLInputElement>(null);
   const labelInput = useRef<HTMLInputElement>(null);
   // While closed the dialog keeps showing the last form, minus the secrets:
-  // the key and what plugin.editor.clearSecrets blanks.
+  // the key, a custom proxy address (which may carry a password) and what
+  // plugin.editor.clearSecrets blanks.
   const last = useRef<EditorState | null>(null);
   if (s.editor) last.current = s.editor;
   else if (last.current) {
     const blank = plugin.editor.clearSecrets ? plugin.editor.clearSecrets(last.current) : null;
-    if (last.current.key || blank) last.current = { ...last.current, ...blank, key: "" };
+    if (last.current.key || last.current.proxy || blank) last.current = { ...last.current, ...blank, key: "", proxy: "" };
   }
   const ed = s.editor || last.current || newEditor(0, "add", null, defaultPrefix(s.status));
   const seq = s.editor ? s.editor.seq : 0;

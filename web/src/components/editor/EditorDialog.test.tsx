@@ -38,4 +38,19 @@ describe("EditorDialog", () => {
     expect(key!.getAttribute("autocapitalize")).toBe("off");
     expect(host.querySelector('input[type="password"]')).toBeNull();
   });
+
+  it("clears the key and a typed proxy address once closed", () => {
+    const open: State = {
+      ...initialState(), lang: "en", view: "app",
+      editor: { ...newEditor(1, "add", null, "wokey"), key: "sk-test-secret-key", proxyChoice: "custom", proxy: "socks5h://u:proxy-secret@127.0.0.1:9" },
+    };
+    act(() => root.render(<EditorDialog t={t} s={open} />));
+    expect(host.querySelector<HTMLInputElement>("#f-key")!.value).toBe("sk-test-secret-key");
+    expect(host.querySelector<HTMLInputElement>("#f-proxy")!.value).toBe("socks5h://u:proxy-secret@127.0.0.1:9");
+
+    act(() => root.render(<EditorDialog t={t} s={{ ...open, editor: null }} />));
+    const values = [...host.querySelectorAll<HTMLInputElement>("input")].map((input) => input.value);
+    expect(values.some((value) => value.includes("secret"))).toBe(false);
+    expect(host.innerHTML).not.toContain("secret");
+  });
 });
