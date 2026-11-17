@@ -52,9 +52,9 @@ CPA ──c-shared RPC──▶ 插件 main.go（cgo 外壳）
 - **注册**：Chat Completions、Responses、Messages 三种协议都原样转发，CPA 不做协议转换（`Spec.Protocols` 可以只声明其中几种，其余由 CPA 转换）；凭证文件解析成 CPA 认证；模型按凭证的 `models`、`prefix` 登记，目录变了就更新 `model_revision`，让 CPA 重新登记。
 - **请求**：只在请求体顶层按字节换 `model`，Chat 流式请求补 `stream_options`（`Spec.AggregateChat` 时非流式 Chat 请求也改发流式，再聚合成一个回答）；User-Agent 是 `cpa-<id>-plugin/<版本>`；转发 `Anthropic-Beta`、`Anthropic-Version`，以及 `Spec.ForwardHeaders` 列出的请求头。
 - **错误**：能读出 `{"error":{"message"}}`、`{"error":"..."}`、`{"message"}` 三种错误体，去掉消息开头的 `[code=…]`；流里的错误关键字按同一张表定状态码（余额不足报 402、限流报 429 等）；错误消息统一以 `<id>: ` 开头。
-- **请求日志**：存在 `plugins/<id>-data/<库名>`，记 Token、首字时间、两种速度、出口和上游请求 ID。流式请求按客户端实际收到的结果记。
+- **请求日志**：存在 `plugins/<id>-data/<库名>`，记 Token、首字时间、两种速度、出口和上游请求 ID。流式请求按客户端实际收到的结果记。条数超过 `log-retention` 后成批删掉最旧的记录（每批为上限的 1%，1 到 100 条），所以表里最多临时多出一批；打开日志、改配置时会立刻删回上限。SQLite 每个连接的页缓存是 512 KiB。
 - **出口**：每个凭证可以单独配代理，没配就用 CPA 全局代理，再没有就直连。同一个出口的请求排队，管理页能检测出口 IP 和延迟。
-- **管理接口**：放在 `/v0/management/plugins/<id>/` 下，包括状态、模型目录、凭证增改、额度、请求日志、代理列表，以及管理页、logo、国旗图标。
+- **管理接口**：放在 `/v0/management/plugins/<id>/` 下，包括状态、模型目录、凭证增改、额度、请求日志、代理列表，以及管理页、logo、国旗图标。状态里的 `runtime` 是插件自己那套 Go 运行时的内存（`heap_inuse`、`heap_idle`、`sys` 等，单位字节）、goroutine 数、GC 次数和 Go 版本；每个插件的 .so 在 CPA 进程里各有一套运行时，所以这些数只属于这个插件，不含代码段、线程栈和 SQLite 缓存这类 C 内存。管理页的配置概览里有对应的卡片。
 - **额度**：账号查询在凭证的出口排队轮次里执行，结果缓存一分钟（`AccountKey` 返回空串则不缓存），交给 CPA 额度面板显示；`quota.reset` 统一回答不支持。
 - **count_tokens**：适配器实现 `TokenCounter` 时转发到上游，否则直接回 501。
 

@@ -58,7 +58,7 @@ go test ./internal/<id> -run TestSnapshots -update   # 只重写 steps[].output
 ## 归一化（只有这些值允许每次运行不同）
 
 - 占位符：httptest 上游 URL 写成 `{{UPSTREAM}}`，裸的 host:port 写成 `{{UPSTREAM_HOST}}`，每次运行的数据目录写成 `{{DATA_DIR}}`（含解析符号链接后的路径）。输入输出都一样。
-- 只在 management.handle 的响应里，按名字把 `time`、`duration_ms`、`ttft_ms`、`last_frame_ms`、`created_at`、`proxy_id`、`latency_ms`、`output_tokens_per_second`、`e2e_tokens_per_second`，以及 `proxy` 下或 `proxies` 数组里对象的 `id`，替换成 `"<volatile>"`。两个速度字段在请求日志条目（带 `duration_ms` 的对象）里直接删掉，因为只有耗时超过 50 毫秒的调用才有。字符串里出现的同名 JSON 成员按文本替换。`Binding.VolatileFields` 追加插件自己的名字（OpenDesign 的 `log_since`）。
+- 只在 management.handle 的响应里，按名字把 `time`、`duration_ms`、`ttft_ms`、`last_frame_ms`、`created_at`、`proxy_id`、`latency_ms`、`output_tokens_per_second`、`e2e_tokens_per_second`，以及 `proxy` 下或 `proxies` 数组里对象的 `id`，替换成 `"<volatile>"`。状态视图里的 `runtime`（插件自己 Go 运行时的内存和 goroutine 数）整个替换成 `"<volatile>"`。两个速度字段在请求日志条目（带 `duration_ms` 的对象）里直接删掉，因为只有耗时超过 50 毫秒的调用才有。字符串里出现的同名 JSON 成员按文本替换。`Binding.VolatileFields` 追加插件自己的名字（OpenDesign 的 `log_since`）。
 - `Binding.ConcurrentPaths` 里的路由（Ollama 的 `POST /api/show`）是插件并发请求的，连续的一段按请求体排序。
 - `Binding.GeneratedIDs`：插件随机生成、通过 management.handle 返回的值（OpenDesign 的 `{{login_id}}`、`{{proxy_id}}`）。后续步骤的输入可以用占位符引用每类最新的值，输出里出现的每个值都写成 `"<volatile>"`。
 - 其他一律不归一化：时钟固定，状态、目录、账号和 auth 刷新时间都精确比较。

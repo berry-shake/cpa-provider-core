@@ -239,3 +239,82 @@ func TestRequestLogUpgradesOldTable(t *testing.T) {
 		t.Fatalf("reopen: %+v", page)
 	}
 }
+
+func TestConnectionsUseTheSmallPageCache(t *testing.T) {
+	l := New("requests.db", "test: ", func(string) {})
+	l.Configure(t.TempDir(), 100, 0)
+	defer l.Close()
+	var size int
+	if err := l.db.QueryRow("PRAGMA cache_size").Scan(&size); err != nil {
+		t.Fatal(err)
+	}
+	if size != -pageCacheKiB {
+		t.Fatalf("cache_size = %d, want %d", size, -pageCacheKiB)
+	}
+}
+
+func TestRowCapIsKeptInBatches(t *testing.T) {
+	for retention, want := range map[int]int64{3: 1, 99: 1, 100: 1, 1000: 10, 100000: 100, 1000000: 100} {
+		if got := pruneBatch(retention); got != want {
+			t.Errorf("pruneBatch(%d) = %d, want %d", retention, got, want)
+		}
+	}
+	l := New("requests.db", "test: ", func(string) {})
+	l.Configure(t.TempDir(), 1000, 0)
+	defer l.Close()
+	add := func(n int) {
+		for i := 0; i < n; i++ {
+			l.Add(Entry{Model: "m", Status: "success"})
+		}
+	}
+	total := func() int { return l.Query(Query{Limit: 1}).Total }
+	add(1000)
+	if got := total(); got != 1000 {
+		t.Fatalf("at the cap: %d rows", got)
+	}
+	// Over the cap by less than a batch (10): the rows wait for the batch.
+	add(9)
+	if got := total(); got != 1009 {
+		t.Fatalf("within a batch over the cap: %d rows", got)
+	}
+	// The insert that completes the batch brings the table back to the cap.
+	add(1)
+	if got := total(); got != 1000 {
+		t.Fatalf("after a batch: %d rows", got)
+	}
+	if page := l.Query(Query{Limit: 1}); page.Items[0].ID != "1010" {
+		t.Fatalf("newest row = %s", page.Items[0].ID)
+	}
+	// Changing the limits applies the cap at once.
+	add(5)
+	l.Configure(l.dir, 1000, 0)
+	if got := total(); got != 1000 {
+		t.Fatalf("after Configure: %d rows", got)
+	}
+}
+
+// BenchmarkAddAtCap writes into a full log, where every insert used to be
+// followed by a DELETE of the oldest row.
+func BenchmarkAddAtCap(b *testing.B) {
+	l := New("requests.db", "bench: ", func(string) {})
+	l.Configure(b.TempDir(), 1000, 30)
+	defer l.Close()
+	for i := 0; i < 1000; i++ {
+		l.Add(Entry{Model: "m", Status: "success"})
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		l.Add(Entry{Model: "wokey/claude-opus-5-5", Status: "success", HTTPStatus: 200, InputTokens: 160000, OutputTokens: 900})
+	}
+}
+
+// BenchmarkAddBelowCap is the same insert while the log is not full.
+func BenchmarkAddBelowCap(b *testing.B) {
+	l := New("requests.db", "bench: ", func(string) {})
+	l.Configure(b.TempDir(), 1<<30, 30)
+	defer l.Close()
+	b.ReportAllocs()
+	for b.Loop() {
+		l.Add(Entry{Model: "wokey/claude-opus-5-5", Status: "success", HTTPStatus: 200, InputTokens: 160000, OutputTokens: 900})
+	}
+}

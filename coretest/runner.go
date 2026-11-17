@@ -571,6 +571,8 @@ var commonVolatileFields = []string{
 	"time", "duration_ms", "ttft_ms", "last_frame_ms",
 	"output_tokens_per_second", "e2e_tokens_per_second",
 	"created_at", "proxy_id", "latency_ms",
+	// The status view's figures of the plugin's own Go runtime, as a whole.
+	"runtime",
 }
 
 // speedFields are dropped from request log entries.

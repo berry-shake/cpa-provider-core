@@ -1,8 +1,8 @@
 import { plugin } from "@provider/plugin";
-import type { StatusView } from "../../api/types";
+import type { RuntimeView, StatusView } from "../../api/types";
 import type { T } from "../../i18n";
 import { forceState } from "../../lib/credentials";
-import { yamlScalar } from "../../lib/format";
+import { fmtBytes, fmtCount, yamlScalar } from "../../lib/format";
 import { store, type State } from "../../state/store";
 
 interface KV {
@@ -38,6 +38,17 @@ export function configRows(t: T, data: StatusView): KV[] {
     { label: t("cfg.refresh"), value: minutes > 0 ? t("cfg.refreshValue", { n: minutes }) : t("cfg.refreshOff") },
     { label: t("cfg.timeout"), value: cfg.request_timeout_seconds ? t("cfg.seconds", { n: cfg.request_timeout_seconds }) : "—" },
     { label: t("cfg.streamIdle"), value: cfg.stream_idle_timeout_seconds ? t("cfg.seconds", { n: cfg.stream_idle_timeout_seconds }) : "—" },
+  ];
+}
+
+/** The plugin's own Go runtime, as the status view last reported it. */
+export function runtimeRows(t: T, rt: RuntimeView): KV[] {
+  return [
+    { label: t("runtime.heap"), value: fmtBytes(rt.heap_inuse), sub: t("runtime.heapSub", { alloc: fmtBytes(rt.heap_alloc) }) },
+    { label: t("runtime.idle"), value: fmtBytes(rt.heap_idle), sub: t("runtime.idleSub", { released: fmtBytes(rt.heap_released) }) },
+    { label: t("runtime.sys"), value: fmtBytes(rt.sys), sub: t("runtime.sysSub", { stacks: fmtBytes(rt.stack_inuse) }) },
+    { label: t("runtime.goroutines"), value: fmtCount(rt.goroutines), sub: t("runtime.gcSub", { n: fmtCount(rt.num_gc) }) },
+    { label: t("runtime.go"), value: rt.go_version || "—", mono: true, sub: t("runtime.procsSub", { n: rt.gomaxprocs }) },
   ];
 }
 
@@ -124,6 +135,20 @@ export function ConfigPanel({ t, s }: { t: T; s: State }) {
               </details>
             </div>
           </section>
+          {data && data.runtime ? (
+            <section className="card">
+              <div className="card-header">
+                <div className="card-title">
+                  <h2>{t("runtime.title")}</h2>
+                  <span className="hint">{t("runtime.hint")}</span>
+                </div>
+              </div>
+              <div className="card-body">
+                <KVList id="runtime-list" rows={runtimeRows(t, data.runtime)} />
+                <p className="config-note">{t("runtime.note")}</p>
+              </div>
+            </section>
+          ) : null}
           <section className="card">
             <div className="card-header">
               <div className="card-title">

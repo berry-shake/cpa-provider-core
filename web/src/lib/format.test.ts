@@ -1,5 +1,5 @@
 import { plugin } from "@provider/plugin";
-import { cleanPrefix, fileStem, fmtCount, fmtMS, fmtPct, fmtRate, fmtTokens, fmtUSD, formatShort, formatTime, formatWhen, yamlScalar } from "./format";
+import { cleanPrefix, fileStem, fmtBytes, fmtCount, fmtMS, fmtPct, fmtRate, fmtTokens, fmtUSD, formatShort, formatTime, formatWhen, yamlScalar } from "./format";
 
 describe("fmtUSD", () => {
   it.each([
@@ -146,5 +146,20 @@ describe("cleanPrefix", () => {
     expect(cleanPrefix("///")).toBe("");
     expect(cleanPrefix(null)).toBe("");
     expect(cleanPrefix(undefined)).toBe("");
+  });
+});
+
+describe("fmtBytes", () => {
+  it("picks a binary unit", () => {
+    expect(fmtBytes(0)).toBe("0 B");
+    expect(fmtBytes(1023)).toBe("1023 B");
+    expect(fmtBytes(48 * 1024)).toBe("48 KiB");
+    expect(fmtBytes(12.4 * 1024 * 1024)).toBe("12.4 MiB");
+    expect(fmtBytes(1.25 * 1024 * 1024 * 1024)).toBe("1.3 GiB");
+  });
+  it("leaves unknown values blank", () => {
+    expect(fmtBytes(undefined)).toBe("—");
+    expect(fmtBytes("x")).toBe("—");
+    expect(fmtBytes(-1)).toBe("—");
   });
 });

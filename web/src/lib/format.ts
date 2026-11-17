@@ -61,6 +61,16 @@ export function fmtRateNum(v: number | null | undefined): string {
   return v === null || v === undefined ? "—" : Math.round(v).toLocaleString();
 }
 
+/** A byte count in binary units: "512 B", "48 KiB", "12.4 MiB", "1.2 GiB"; "—" when unknown. */
+export function fmtBytes(value: unknown): string {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return "—";
+  if (n < 1024) return Math.round(n) + " B";
+  if (n < 1024 * 1024) return Math.round(n / 1024) + " KiB";
+  if (n < 1024 * 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + " MiB";
+  return (n / (1024 * 1024 * 1024)).toFixed(1) + " GiB";
+}
+
 export function fmtCount(n: unknown): string {
   return (Number(n) || 0).toLocaleString();
 }

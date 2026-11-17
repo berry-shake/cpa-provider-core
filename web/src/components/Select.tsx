@@ -66,10 +66,12 @@ export function Select<V extends string = string>(props: SelectProps<V>) {
     const above = rect.top - MENU_GAP - VIEWPORT_MARGIN;
     const wanted = Math.min(MENU_MAX, menu.current ? menu.current.scrollHeight : MENU_MAX);
     const left = Math.max(VIEWPORT_MARGIN, Math.min(rect.left, window.innerWidth - VIEWPORT_MARGIN - rect.width));
+    // Below when the menu fits there or there is no more room above; the
+    // menu never grows past the room on its side, so it stays in view.
     if (below >= wanted || below >= above) {
-      setBox({ left, width: rect.width, top: rect.bottom + MENU_GAP, maxHeight: Math.max(120, Math.min(MENU_MAX, below)) });
+      setBox({ left, width: rect.width, top: rect.bottom + MENU_GAP, maxHeight: Math.max(0, Math.min(MENU_MAX, below)) });
     } else {
-      setBox({ left, width: rect.width, bottom: window.innerHeight - rect.top + MENU_GAP, maxHeight: Math.min(MENU_MAX, above) });
+      setBox({ left, width: rect.width, bottom: window.innerHeight - rect.top + MENU_GAP, maxHeight: Math.max(0, Math.min(MENU_MAX, above)) });
     }
   }, []);
 
@@ -211,7 +213,8 @@ export function Select<V extends string = string>(props: SelectProps<V>) {
         role="combobox"
         aria-haspopup="listbox"
         aria-expanded={open}
-        aria-controls={listId}
+        // The listbox exists only while open.
+        aria-controls={open ? listId : undefined}
         aria-activedescendant={open && active >= 0 ? optionId(active) : undefined}
         aria-label={props["aria-label"]}
         disabled={disabled}

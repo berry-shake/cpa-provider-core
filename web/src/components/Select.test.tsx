@@ -102,3 +102,42 @@ test("a press outside closes the menu", () => {
   expect(menu()).toBeNull();
   expect(changes).toEqual([]);
 });
+
+test("aria-controls points at the listbox only while it exists", () => {
+  expect(trigger().hasAttribute("aria-controls")).toBe(false);
+  act(() => trigger().click());
+  expect(trigger().getAttribute("aria-controls")).toBe(menu()!.id);
+  key("Escape");
+  expect(trigger().hasAttribute("aria-controls")).toBe(false);
+});
+
+describe("menu placement", () => {
+  const innerHeight = window.innerHeight;
+  const scrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+  const placeTrigger = (top: number) => {
+    trigger().getBoundingClientRect = () => ({ top, bottom: top + 30, left: 10, right: 210, width: 200, height: 30, x: 10, y: top, toJSON: () => ({}) });
+  };
+  const menuStyle = () => (menu() as HTMLElement).style;
+  afterEach(() => {
+    Object.defineProperty(window, "innerHeight", { value: innerHeight, configurable: true });
+    if (scrollHeight) Object.defineProperty(HTMLElement.prototype, "scrollHeight", scrollHeight);
+  });
+
+  test("stays within the room below instead of a 120 px minimum", () => {
+    Object.defineProperty(window, "innerHeight", { value: 400, configurable: true });
+    placeTrigger(300); // 400 - 330 - 4 gap - 8 margin = 58 px below
+    act(() => trigger().click());
+    expect(menuStyle().top).toBe("334px");
+    expect(menuStyle().maxHeight).toBe("58px");
+  });
+
+  test("opens above when a long menu does not fit below and there is more room above", () => {
+    Object.defineProperty(window, "innerHeight", { value: 400, configurable: true });
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", { configurable: true, get: () => 200 });
+    placeTrigger(300);
+    act(() => trigger().click());
+    expect(menuStyle().top).toBe("");
+    expect(menuStyle().bottom).toBe("104px"); // 400 - 300 + 4 gap
+    expect(menuStyle().maxHeight).toBe("288px"); // 300 - 4 gap - 8 margin
+  });
+});

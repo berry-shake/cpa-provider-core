@@ -3,6 +3,7 @@ import { components } from "@provider/components";
 import type { CredentialView, LogEntry, QuotaView } from "../api/types";
 import { makeT } from "../i18n";
 import { initialState, type State } from "../state/store";
+import { ConfigPanel } from "./config/ConfigPanel";
 import { CredCard } from "./keys/CredCard";
 import { LogRow } from "./logs/LogRow";
 import { ProxiesPanel } from "./proxies/ProxiesPanel";
@@ -338,5 +339,46 @@ describe("ProxiesPanel", () => {
     const all = rows(doc);
     expect(cells(all[0])[1]).toBe("http://g:3128");
     expect(all[2].textContent).toBe(t("proxies.empty"));
+  });
+});
+
+describe("ConfigPanel runtime", () => {
+  const state = (runtime?: NonNullable<State["status"]>["runtime"]): State => ({
+    ...initialState(),
+    lang: "en",
+    tab: "config",
+    view: "app",
+    status: {
+      plugin: "wokey", version: "t", now: "", catalog: { count: 0 },
+      config: { base_url: "", default_prefix: "wokey", models_refresh_minutes: 0, request_timeout_seconds: 0, stream_idle_timeout_seconds: 0 },
+      credentials: [],
+      runtime,
+    },
+  });
+
+  it("shows the plugin's own runtime figures", () => {
+    const MiB = 1024 * 1024;
+    const doc = html(renderToStaticMarkup(<ConfigPanel t={t} s={state({
+      go_version: "go1.26.10", heap_alloc: 5.2 * MiB, heap_inuse: 6.5 * MiB, heap_idle: 9 * MiB, heap_released: 4 * MiB,
+      stack_inuse: 0.5 * MiB, sys: 21.3 * MiB, num_gc: 1234, goroutines: 17, gomaxprocs: 4,
+    })} />));
+    const list = doc.querySelector("#runtime-list");
+    expect(list).not.toBeNull();
+    const values = [...list!.querySelectorAll("dd > span")].map((span) => span.textContent);
+    expect(values).toEqual(["6.5 MiB", "9.0 MiB", "21.3 MiB", "17", "go1.26.10"]);
+    const subs = [...list!.querySelectorAll("dd > .sub")].map((sub) => sub.textContent);
+    expect(subs).toEqual([
+      t("runtime.heapSub", { alloc: "5.2 MiB" }),
+      t("runtime.idleSub", { released: "4.0 MiB" }),
+      t("runtime.sysSub", { stacks: "512 KiB" }),
+      t("runtime.gcSub", { n: (1234).toLocaleString() }),
+      t("runtime.procsSub", { n: 4 }),
+    ]);
+  });
+
+  it("leaves the card out for plugins that do not report a runtime", () => {
+    const doc = html(renderToStaticMarkup(<ConfigPanel t={t} s={state()} />));
+    expect(doc.querySelector("#runtime-list")).toBeNull();
+    expect(doc.body.textContent).not.toContain(t("runtime.title"));
   });
 });

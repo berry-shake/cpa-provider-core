@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -25,8 +26,52 @@ type statusView struct {
 	Now         string           `json:"now"`
 	Config      configView       `json:"config"`
 	Catalog     catalogView      `json:"catalog"`
+	Runtime     runtimeView      `json:"runtime"`
 	Credentials []credentialView `json:"credentials"`
 	ListError   string           `json:"list_error,omitempty"`
+}
+
+// runtimeView is the plugin's own Go runtime. Every plugin .so carries its
+// own runtime inside the CPA process, with its own heap and GC, so these
+// figures are this plugin's alone. They leave out memory the runtime does
+// not manage: the plugin's code pages, threads' system stacks and C
+// allocations such as SQLite's page cache.
+type runtimeView struct {
+	GoVersion string `json:"go_version"`
+	// HeapAlloc is the size of the live and not yet swept heap objects;
+	// HeapInuse adds the unused part of the spans holding them.
+	HeapAlloc uint64 `json:"heap_alloc"`
+	HeapInuse uint64 `json:"heap_inuse"`
+	// HeapIdle is heap memory holding no objects; HeapReleased is the part
+	// of it already returned to the OS.
+	HeapIdle     uint64 `json:"heap_idle"`
+	HeapReleased uint64 `json:"heap_released"`
+	StackInuse   uint64 `json:"stack_inuse"`
+	// Sys is everything the runtime obtained from the OS.
+	Sys        uint64 `json:"sys"`
+	NumGC      uint32 `json:"num_gc"`
+	Goroutines int    `json:"goroutines"`
+	GOMAXPROCS int    `json:"gomaxprocs"`
+}
+
+// runtimeStats reads the plugin's runtime. ReadMemStats stops the world
+// briefly (microseconds at these heap sizes); the status view is read on
+// demand only.
+func runtimeStats() runtimeView {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	return runtimeView{
+		GoVersion:    runtime.Version(),
+		HeapAlloc:    m.HeapAlloc,
+		HeapInuse:    m.HeapInuse,
+		HeapIdle:     m.HeapIdle,
+		HeapReleased: m.HeapReleased,
+		StackInuse:   m.StackInuse,
+		Sys:          m.Sys,
+		NumGC:        m.NumGC,
+		Goroutines:   runtime.NumGoroutine(),
+		GOMAXPROCS:   runtime.GOMAXPROCS(0),
+	}
 }
 
 type configView struct {
@@ -112,6 +157,7 @@ func (s *Service) status() statusView {
 			GlobalProxy:              redactProxy(s.globalProxy()),
 		},
 		Catalog:     catalogSummary(s.catalog.Current()),
+		Runtime:     runtimeStats(),
 		Credentials: []credentialView{},
 	}
 	if force, known := s.forceModelPrefix(); known {

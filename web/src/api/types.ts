@@ -55,12 +55,32 @@ export interface CredentialView extends CredentialExtra {
   read_error?: string;
 }
 
+/**
+ * The plugin's own Go runtime (each plugin .so has one inside the CPA
+ * process). Byte counts; code pages, thread stacks and C memory such as
+ * SQLite's page cache are not included.
+ */
+export interface RuntimeView {
+  go_version: string;
+  heap_alloc: number;
+  heap_inuse: number;
+  heap_idle: number;
+  heap_released: number;
+  stack_inuse: number;
+  sys: number;
+  num_gc: number;
+  goroutines: number;
+  gomaxprocs: number;
+}
+
 export interface StatusView {
   plugin: string;
   version: string;
   now: string;
   config: PluginConfigView;
   catalog: CatalogMeta;
+  /** Absent from plugins built on core before v0.1.6. */
+  runtime?: RuntimeView;
   credentials: CredentialView[];
   list_error?: string;
 }
